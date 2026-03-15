@@ -266,7 +266,7 @@ void CUnitScript::TickAllAnims(int deltaTime)
 		if (lmp->GetDirty()) {
 			lmp->SetDirty(false);
 
-			if unlikely(lmp->rank <= lastDirtyRank) {
+			if unlikely(lmp->rank < lastDirtyRank) {
 				lastDirtyRank = lmp->rank;
 			}
 

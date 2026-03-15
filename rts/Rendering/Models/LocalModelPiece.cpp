@@ -89,7 +89,7 @@ void LocalModelPiece::RemoveChild(LocalModelPiece* c)
 {
 	c->parent = nullptr;
 	children.erase(std::find(children.begin(), children.end(), c));
-	c->rank = 0;
+	c->rank = uint32_t(-1);
 }
 
 void LocalModelPiece::SetFloat3(const float3& src, float3& dst) {
@@ -97,10 +97,10 @@ void LocalModelPiece::SetFloat3(const float3& src, float3& dst) {
 	if (blockScriptAnims)
 		return;
 
-	if (!dirty && !dst.same(src)) {
-		dst = src;
+	SetDirty(dirty || !dst.same(src));
+	dst = src;
 
-		SetDirty(true);
+	if (dirty) {
 		assert(localModel);
 		localModel->SetBoundariesNeedsRecalc();
 	}
@@ -112,10 +112,10 @@ void LocalModelPiece::SetFloat(const float& src, float& dst)
 	if (blockScriptAnims)
 		return;
 
-	if (!dirty && !(dst == src)) {
-		dst = src;
+	SetDirty(dirty || !(dst == src));
+	dst = src;
 
-		SetDirty(true);
+	if (dirty) {
 		assert(localModel);
 		localModel->SetBoundariesNeedsRecalc();
 	}

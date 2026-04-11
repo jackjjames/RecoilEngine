@@ -23,7 +23,7 @@ docker-build-v2/build.sh -j 8 linux
 docker-build-v2/build.sh windows
 
 # Change optimization level — trailing -D… is forwarded to configure.sh and
-# overrides the baked-in RELWITHDEBINFO default (last -D wins in CMake).
+# overrides the baked-in RELWITHDEBINFO default.
 docker-build-v2/build.sh linux -DCMAKE_BUILD_TYPE=DEBUG
 docker-build-v2/build.sh linux -DCMAKE_BUILD_TYPE=RELEASE
 docker-build-v2/build.sh linux -DCMAKE_BUILD_TYPE=PROFILE
@@ -35,7 +35,7 @@ docker-build-v2/build.sh linux -DBUILD_spring-headless=OFF -DTRACY_ENABLE=ON
 docker-build-v2/build.sh --configure linux -LH
 
 # Build a specific target — use --compile so args flow to `cmake --build`,
-# not to configure. Without --compile, `-t …` would be swallowed by configure.
+# not to configure. Without --compile, `-t …` would be rejected by configure.
 docker-build-v2/build.sh --compile linux -t engine-headless
 docker-build-v2/build.sh --compile linux -t engine-legacy
 docker-build-v2/build.sh --compile linux -t tests --verbose

@@ -20,7 +20,8 @@ git submodule update --init --recursive
 **Using Docker (Recommended):**
 ```bash
 # Full build (default: RELWITHDEBINFO, -O3 -g -DNDEBUG, Ninja)
-# Output lands in build-linux/ and the ready-to-use install in build-linux/install/
+# Output lands in build-<arch>-<os>/ (e.g. build-amd64-linux/) and the
+# ready-to-use install in build-amd64-linux/install/
 docker-build-v2/build.sh linux
 
 # Parallelism
@@ -90,9 +91,10 @@ cmake --build . --target engine-dedicated
 cmake --build . --target tests
 ```
 
-> The docker flow writes to **`build-linux/`** (or `build-windows/`), which is a
-> different directory than the `build/` used by the this flow. When
-> running tests, point commands at whichever build directory you populated.
+> The docker flow writes to **`build-<arch>-<os>/`** (e.g. `build-amd64-linux/`
+> or `build-amd64-windows/`), which is a different directory than the `build/`
+> used by this flow. When running tests, point commands at whichever build
+> directory you populated.
 
 ### Build Types
 - `DEBUG` - Debug build with full symbols and no optimization
@@ -119,7 +121,9 @@ See `test/AGENTS.md` for details on writing tests, available compile flags, patt
 
 **Build and run all tests:**
 ```bash
-# From build/
+# From build/ — ctest / check recipes below assume a non-docker build; for
+# a docker build, cmake bakes container paths into CTestTestfile.cmake, so
+# invoke the binaries directly (see next section) or re-enter the container.
 cmake --build . --target tests    # build all test executables (no run)
 ctest                             # run all tests (does not rebuild)
 # OR

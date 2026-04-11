@@ -8,7 +8,9 @@ This file provides guidance to coding agents when working with code in this repo
 # From build/: build all test executables
 cmake --build . --target tests
 
-# From build/: run tests
+# From build/: run tests. ctest/check recipes here assume a non-docker
+# build; docker bakes in-container paths into CTestTestfile.cmake, so for
+# docker builds invoke the binaries directly (see below).
 ctest                                   # run already-built tests; does not rebuild
 cmake --build . --target check          # rebuild engine-headless + all tests first, then ctest -V
 
@@ -19,7 +21,7 @@ ctest -R Float3 -V                      # same, verbose
 ctest -N                                # list all registered tests without running
 
 # From repo root: run a single test binary directly (fastest iteration).
-# Use build-linux/ instead of build/ if you built via docker.
+# Use build-amd64-linux/ instead of build/ if you built via docker.
 ./build/test/test_Float3
 ./build/test/test_Float3 -s             # Catch2: show passing assertions too
 ./build/test/test_Float3 "Float3"       # filter by TEST_CASE name (supports wildcards)

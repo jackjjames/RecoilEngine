@@ -22,7 +22,7 @@ ctest -N                                # list all registered tests without runn
 # Use build-linux/ instead of build/ if you built via docker.
 ./build/test/test_Float3
 ./build/test/test_Float3 -s             # Catch2: show passing assertions too
-./build/test/test_Float3 "SectionName"
+./build/test/test_Float3 "Float3"       # filter by TEST_CASE name (supports wildcards)
 ```
 
 `cmake --build . --target check` is the full-fat target: it depends on `engine-headless` and

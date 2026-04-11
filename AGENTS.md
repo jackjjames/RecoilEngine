@@ -8,6 +8,13 @@ RecoilEngine is an open-source real-time strategy (RTS) game engine written in C
 
 ## Build Commands
 
+### Submodules
+
+The repo uses git submodules for vendored libraries (`rts/lib/*`, `tools/pr-downloader`, AI skirmish bots, etc.). If you cloned without `--recurse-submodules`, initialize them before building:
+```bash
+git submodule update --init --recursive
+```
+
 ### Building the Engine
 
 **Using Docker (Recommended):**
@@ -60,7 +67,7 @@ cmake -G Ninja ..
 # Optional: pin to gcc-13 + gold linker via the in-repo toolchain file
 # (tracked under docker-build-v2/; same compiler the docker build uses).
 cmake \
-    -DCMAKE_TOOLCHAIN_FILE=../docker-build-v2/amd64-linux/toolchain.cmake ..
+    -DCMAKE_TOOLCHAIN_FILE=../docker-build-v2/images/all-linux/toolchain.cmake ..
 
 # Optional: speed up incremental builds with ccache
 cmake \
@@ -135,8 +142,9 @@ cmake --build . --target check    # rebuild engine-headless + all tests, then ru
 # Catch2: show passing assertions too
 ./build/test/test_Float3 -s
 
-# Run a specific test case by name
-./build/test/test_Float3 "TestSection"
+# Run a specific test case by name (positional arg matches TEST_CASE name, supports wildcards)
+./build/test/test_Float3 "Float3"
+./build/test/test_Float3 "Float34_*"
 ```
 
 **Run via CTest (from inside build/):**

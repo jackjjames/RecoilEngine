@@ -121,9 +121,10 @@ See `test/AGENTS.md` for details on writing tests, available compile flags, patt
 
 **Build and run all tests:**
 ```bash
-# From build/ — ctest / check recipes below assume a non-docker build; for
-# a docker build, cmake bakes container paths into CTestTestfile.cmake, so
-# invoke the binaries directly (see next section) or re-enter the container.
+# From build/ — ctest / check recipes below assume a non-docker build.
+# For a docker build, run `docker-build-v2/build.sh --compile linux -t check`
+# (runs ctest inside the container) or invoke the binaries in
+# build-amd64-linux/test/ directly.
 cmake --build . --target tests    # build all test executables (no run)
 ctest                             # run all tests (does not rebuild)
 # OR

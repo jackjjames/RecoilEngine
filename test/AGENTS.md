@@ -9,8 +9,9 @@ This file provides guidance to coding agents when working with code in this repo
 cmake --build . --target tests
 
 # From build/: run tests. ctest/check recipes here assume a non-docker
-# build; docker bakes in-container paths into CTestTestfile.cmake, so for
-# docker builds invoke the binaries directly (see below).
+# build. For a docker build, run `docker-build-v2/build.sh --compile linux -t check`
+# (runs ctest inside the container) or invoke binaries in
+# build-amd64-linux/test/ directly (see below).
 ctest                                   # run already-built tests; does not rebuild
 cmake --build . --target check          # rebuild engine-headless + all tests first, then ctest -V
 

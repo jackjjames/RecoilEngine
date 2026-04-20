@@ -44,13 +44,8 @@
 #include "Rml/RmlInputReceiver.h"
 #include "Rml/SolLua/RmlSolLua.h"
 #include "RmlUi_Backend.h"
+#include "RmlUi_RendererFactory.h"
 #include "Rml/SVG/SVGPlugin.h"
-
-#ifndef HEADLESS
-#include "RmlUi_Renderer_GL3_Recoil.h"
-#else
-#include "RmlUi_Renderer_Headless.h"
-#endif
 
 #include "RmlUi_SystemInterface.h"
 #include "RmlUi_VFSFileInterface.h"
@@ -90,11 +85,7 @@ public:
 	}
 
 	RmlSystemInterface system_interface;
-#ifndef HEADLESS
-	RenderInterface_GL3_Recoil render_interface;
-#else
-	RenderInterface_Headless render_interface;
-#endif
+	RmlGui::RenderBackend render_backend;
 	VFSFileInterface file_interface;
 
 	std::vector<Rml::Context*> contexts;
@@ -129,7 +120,7 @@ bool RmlGui::Initialize()
 	LOG_L(L_INFO, "[RmlUi::%s] Beginning RmlUi Initialization", __func__);
 	state = Rml::MakeUnique<BackendState>();
 
-	if (!((bool) state->render_interface)) {
+	if (!((bool) state->render_backend)) {
 		state.reset();
 		LOG_L(L_ERROR, "[RmlGui::%s] Could not initialize render interface.", __func__);
 		return false;
@@ -143,7 +134,7 @@ bool RmlGui::Initialize()
 	Rml::SetSystemInterface(RmlGui::GetSystemInterface());
 	Rml::SetRenderInterface(RmlGui::GetRenderInterface());
 
-	state->render_interface.SetViewport(winX, winY);
+	state->render_backend.SetViewport(winX, winY);
 	state->winX = winX;
 	state->winY = winY;
 
@@ -265,7 +256,7 @@ Rml::SystemInterface* RmlGui::GetSystemInterface()
 
 Rml::RenderInterface* RmlGui::GetRenderInterface()
 {
-	return &state->render_interface;
+	return state->render_backend.GetRenderInterface();
 }
 
 bool RmlGui::IsMouseInteractingWith()
@@ -404,12 +395,12 @@ void RmlGui::RenderFrame()
 
 void RmlGui::BeginFrame()
 {
-	state->render_interface.BeginFrame();
+	state->render_backend.BeginFrame();
 }
 
 void RmlGui::PresentFrame()
 {
-	state->render_interface.EndFrame();
+	state->render_backend.EndFrame();
 	RMLUI_FrameMark;
 }
 
@@ -556,7 +547,7 @@ bool processContextEvent(Rml::Context* context, const SDL_Event& event)
 				auto x = event.window.data1;
 				auto y = event.window.data2;
 
-				state->render_interface.SetViewport(x, y);
+				state->render_backend.SetViewport(x, y);
 				state->winX = x;
 				state->winY = y;
 			}

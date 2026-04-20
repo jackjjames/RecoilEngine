@@ -403,6 +403,13 @@ void CGlobalRendering::PostInit() {
 	// glewInit sets GL_INVALID_ENUM, get rid of it
 	glGetError();
 
+	InitGLCapabilities();
+	InitGLSubsystems();
+	UpdateTimer();
+}
+
+void CGlobalRendering::InitGLCapabilities()
+{
 	char sdlVersionStr[64] = "";
 	char glVidMemStr[64] = "unknown";
 
@@ -413,14 +420,15 @@ void CGlobalRendering::PostInit() {
 
 	LogVersionInfo(sdlVersionStr, glVidMemStr);
 	ToggleGLDebugOutput(0, 0, 0);
+}
 
+void CGlobalRendering::InitGLSubsystems()
+{
 	UniformConstants::GetInstance().Init();
 	ModelUniformData::Init();
 	glGenQueries(glTimerQueries.size(), glTimerQueries.data());
 	RenderBuffer::InitStatic();
 	GL::shapes.Init();
-
-	UpdateTimer();
 }
 
 void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)

@@ -55,6 +55,11 @@ namespace GL {
 		int2 GetWantedSize(bool allowed) const;
 
 	private:
+		void ResetAttachments();
+		void DeleteAttachments();
+		void CreateAttachments(const int2 size);
+		void AttachAttachments(GLuint texTarget);
+
 		FBO buffer;
 
 		GLuint bufferTextureIDs[ATTACHMENT_COUNT];

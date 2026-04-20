@@ -1,5 +1,9 @@
 /* This file is part of the Spring engine (GPL v2 or later), see LICENSE.html */
 
+// Stage-1 renderer seam work keeps this legacy world draw path GL-owned on
+// purpose. Backend-neutral world drawing is a follow-up step after bootstrap,
+// presentation, and engine-managed resource seams are in place.
+
 #include "Rendering/GL/myGL.h"
 
 #include "WorldDrawer.h"

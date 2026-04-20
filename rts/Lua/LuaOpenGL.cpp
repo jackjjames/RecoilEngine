@@ -7,6 +7,10 @@
 //   (GL_MODELVIEW_STACK_DEPTH could help current situation, but
 //    requires the ARB_imaging extension)
 // - use materials instead of raw calls (again, handle dlists)
+//
+// Stage-1 renderer seam work intentionally leaves the Lua OpenGL surface on
+// direct GL entry points. Backend-neutral Lua rendering is deferred until the
+// engine-owned bootstrap, lifecycle, and render-target seams have settled.
 
 #include "Rendering/GL/myGL.h"
 

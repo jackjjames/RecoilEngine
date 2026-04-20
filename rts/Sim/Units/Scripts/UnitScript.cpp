@@ -226,47 +226,23 @@ void CUnitScript::TickAllAnims(int deltaTime)
 	}
 
 	spring::VectorEraseIfAll(anims, [](const auto& ai) { return ai.done; });
-#if 1
-	// BFS pass
-	std::deque<std::pair<LocalModelPiece*, Transform>> q;
-	q.push_front({ rootPiece, Transform{} });
 
-	while (!q.empty()) {
-		// copy
-		auto [lmp, pTra] = q.front();
-		q.pop_front();
-
-		if (lmp->GetDirty()) {
-			lmp->SetDirtyRaw(false);
-			lmp->SetWasUpdatedRaw(true);
-			lmp->UpdatePieceSpaceTransform();
-			lmp->UpdateModelSpaceTransform(pTra);
-		}
-
-		const Transform& modelTra = lmp->GetModelSpaceTransformRaw();
-
-		for (auto* child : lmp->children) {
-			q.push_back({ child, modelTra });
-		}
+	// LocalModel::pieces is laid out preorder-DFS (parent index < descendant indices),
+	// and SetDirty propagates recursively — so a linear dirty-only walk visits parents
+	// before their descendants and is equivalent to BFS, without per-tick deque alloc
+	// or children-pointer chasing.
+	static const Transform kIdentity{};
+	for (auto& lmp : rootPiece->localModel->pieces) {
+		if (!lmp.GetDirty())
+			continue;
+		lmp.SetDirtyRaw(false);
+		lmp.SetWasUpdatedRaw(true);
+		lmp.UpdatePieceSpaceTransform();
+		const Transform& parentTra = (lmp.parent != nullptr)
+			? lmp.parent->GetModelSpaceTransformRaw()
+			: kIdentity;
+		lmp.UpdateModelSpaceTransform(parentTra);
 	}
-#else
-	// DFS pass
-	auto WalkDFS = [](this auto&& self, LocalModelPiece* lmp, const Transform& pTra) -> void {
-		if (lmp->GetDirty()) {
-			lmp->SetDirtyRaw(false);
-			lmp->SetWasUpdatedRaw(true);
-			lmp->UpdatePieceSpaceTransform();
-			lmp->UpdateModelSpaceTransform(pTra);
-		}
-
-		const Transform& modelTra = lmp->GetModelSpaceTransformRaw();
-
-		for (auto* p : lmp->children)
-			self(p, modelTra);
-	};
-
-	WalkDFS(rootPiece, Transform{});
-#endif
 #ifdef _DEBUG
 	for (auto* p : pieces) {
 		// NOTE: p can actually be nullptr when the cob script mentions pieces that don't exist in the model!

@@ -1,5 +1,9 @@
 #include "TextureCollection.h"
 
+// Stage-1 renderer seam work deliberately does not turn the texture system
+// into a backend-neutral API. Texture ownership stays GL-centric until the
+// higher-level bootstrap and submission seams are stable.
+
 #include <algorithm>
 #include <iterator>
 

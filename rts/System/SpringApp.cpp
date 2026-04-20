@@ -265,9 +265,7 @@ bool SpringApp::Init()
 
 	// Init OpenGL
 	globalRendering->PostInit();
-	globalRendering->UpdateGLConfigs();
-	globalRendering->UpdateGLGeometry();
-	globalRendering->InitGLState();
+	globalRendering->RefreshGLState();
 
 	CCameraHandler::InitStatic();
 	CBitmap::InitPool(configHandler->GetInt("TextureMemPoolSize"));
@@ -872,8 +870,7 @@ bool SpringApp::Update()
 	bool swap = true;
 
 	configHandler->Update();
-	globalRendering->UpdateWindow();
-	globalRendering->UpdateTimer();
+	globalRendering->BeginFrame();
 
 	#if 0
 	if (activeController == nullptr)
@@ -891,7 +888,7 @@ bool SpringApp::Update()
 	#endif
 
 	// always swap by default, not doing so can upset some drivers
-	globalRendering->SwapBuffers(swap, false);
+	globalRendering->PresentFrame(swap, false);
 	return retc;
 }
 
@@ -1082,9 +1079,7 @@ bool SpringApp::MainEventHandler(const SDL_Event& event)
 						{
 							SCOPED_ONCE_TIMER("GlobalRendering::UpdateGL");
 
-							globalRendering->UpdateGLConfigs();
-							globalRendering->UpdateGLGeometry();
-							globalRendering->InitGLState();
+							globalRendering->RefreshGLState();
 							UpdateInterfaceGeometry();
 						}
 					}
@@ -1109,9 +1104,7 @@ bool SpringApp::MainEventHandler(const SDL_Event& event)
 						SCOPED_ONCE_TIMER("GlobalRendering::UpdateGL");
 
 						SaveWindowPosAndSize();
-						globalRendering->UpdateGLConfigs();
-						globalRendering->UpdateGLGeometry();
-						globalRendering->InitGLState();
+						globalRendering->RefreshGLState();
 						UpdateInterfaceGeometry();
 					}
 					{

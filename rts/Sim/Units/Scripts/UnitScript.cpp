@@ -26,6 +26,7 @@
 #include "Sim/Projectiles/PieceProjectile.h"
 #include "Sim/Projectiles/ProjectileHandler.h"
 #include "Sim/Projectiles/ProjectileMemPool.h"
+#include "Rendering/Models/LocalModel.hpp"
 #include "Rendering/Env/Particles/Classes/BubbleProjectile.h"
 #include "Rendering/Env/Particles/Classes/HeatCloudProjectile.h"
 #include "Rendering/Env/Particles/Classes/MuzzleFlame.h"
@@ -227,21 +228,40 @@ void CUnitScript::TickAllAnims(int deltaTime)
 
 	spring::VectorEraseIfAll(anims, [](const auto& ai) { return ai.done; });
 
-	// LocalModel::pieces is laid out preorder-DFS (parent index < descendant indices),
-	// and SetDirty propagates recursively — so a linear dirty-only walk visits parents
-	// before their descendants and is equivalent to BFS, without per-tick deque alloc
-	// or children-pointer chasing.
+	// Walk preorderPieces (parent-before-descendants) so each piece's UpdateModelSpaceTransform reads
+	// its parent's already-updated transform. SetDirty propagates recursively, so a linear dirty-only
+	// walk captures every piece that needs recomputation without per-tick deque alloc or children-
+	// pointer chasing. pieces[] isn't walked directly because Spring.SetUnitPieceParent can rewire
+	// parent/children without reordering pieces[].
+	LocalModel* lm = rootPiece->localModel;
+	if (lm->preorderPiecesDirty) {
+		static thread_local std::vector<LocalModelPiece*> scratch;
+		lm->preorderPieces.clear();
+		lm->preorderPieces.reserve(lm->pieces.size());
+		scratch.clear();
+		scratch.push_back(rootPiece);
+		while (!scratch.empty()) {
+			LocalModelPiece* p = scratch.back();
+			scratch.pop_back();
+			lm->preorderPieces.push_back(p);
+			// push children in reverse so they pop in declared order (stable preorder)
+			for (auto it = p->children.rbegin(); it != p->children.rend(); ++it)
+				scratch.push_back(*it);
+		}
+		lm->preorderPiecesDirty = false;
+	}
+
 	static const Transform kIdentity{};
-	for (auto& lmp : rootPiece->localModel->pieces) {
-		if (!lmp.GetDirty())
+	for (LocalModelPiece* lmp : lm->preorderPieces) {
+		if (!lmp->GetDirty())
 			continue;
-		lmp.SetDirtyRaw(false);
-		lmp.SetWasUpdatedRaw(true);
-		lmp.UpdatePieceSpaceTransform();
-		const Transform& parentTra = (lmp.parent != nullptr)
-			? lmp.parent->GetModelSpaceTransformRaw()
+		lmp->SetDirtyRaw(false);
+		lmp->SetWasUpdatedRaw(true);
+		lmp->UpdatePieceSpaceTransform();
+		const Transform& parentTra = (lmp->parent != nullptr)
+			? lmp->parent->GetModelSpaceTransformRaw()
 			: kIdentity;
-		lmp.UpdateModelSpaceTransform(parentTra);
+		lmp->UpdateModelSpaceTransform(parentTra);
 	}
 #ifdef _DEBUG
 	for (auto* p : pieces) {

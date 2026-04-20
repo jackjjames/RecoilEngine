@@ -9,6 +9,9 @@ CR_BIND(LocalModel, )
 CR_REG_METADATA(LocalModel, (
 	CR_MEMBER(pieces),
 
+	CR_IGNORED(preorderPieces),
+	CR_IGNORED(preorderPiecesDirty),
+
 	CR_MEMBER(boundingVolume),
 	CR_IGNORED(luaMaterialData),
 	CR_MEMBER(needsBoundariesRecalc)
@@ -66,6 +69,9 @@ void LocalModel::SetModel(const S3DModel* model, bool initialize)
 
 		pieces[0].UpdateChildTransformRec(true);
 		UpdateBoundingVolume();
+		// preorderPieces holds raw pointers into pieces[] and isn't serialized;
+		// force the next TickAllAnims to rebuild it from the deserialized tree.
+		preorderPiecesDirty = true;
 		return;
 	}
 
@@ -84,6 +90,14 @@ void LocalModel::SetModel(const S3DModel* model, bool initialize)
 	for (auto& piece : pieces) {
 		piece.SavePrevModelSpaceTransform();
 	}
+
+	// CreateLocalModelPieces appends in DFS-preorder, so pieces[i] already is the
+	// topological traversal order — seed the cache directly.
+	preorderPieces.clear();
+	preorderPieces.reserve(pieces.size());
+	for (auto& piece : pieces)
+		preorderPieces.push_back(&piece);
+	preorderPiecesDirty = false;
 
 	UpdateBoundingVolume();
 

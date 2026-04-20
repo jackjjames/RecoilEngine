@@ -87,6 +87,13 @@ private:
 public:
 	std::vector<LocalModelPiece> pieces;
 
+	// Cached topological (parent-before-descendants) traversal, used by CUnitScript::TickAllAnims.
+	// pieces[] itself is only preorder at load time; Spring.SetUnitPieceParent rewires parent/children
+	// without reordering pieces[], so a walk keyed off pieces[]'s index order would read stale parent
+	// transforms after reparenting. This cache is rebuilt on demand when preorderPiecesDirty is set.
+	std::vector<LocalModelPiece*> preorderPieces;
+	bool preorderPiecesDirty = false;
+
 private:
 	// object-oriented box; accounts for piece movement
 	CollisionVolume boundingVolume;

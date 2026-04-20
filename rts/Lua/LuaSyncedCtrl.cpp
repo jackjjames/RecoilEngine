@@ -3759,6 +3759,9 @@ int LuaSyncedCtrl::SetUnitPieceParent(lua_State* L)
 	childPiece->parent->RemoveChild(childPiece);
 	childPiece->SetParent(parentPiece);
 	parentPiece->AddChild(childPiece);
+	// reparenting breaks the preorder invariant of LocalModel::pieces; force CUnitScript::TickAllAnims
+	// to rebuild its traversal cache so transforms propagate parent-before-child.
+	unit->localModel.preorderPiecesDirty = true;
 	return 0;
 }
 

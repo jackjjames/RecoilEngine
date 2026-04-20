@@ -51,6 +51,8 @@ public:
 	void DestroyWindowAndContext();
 	void KillSDL() const;
 	void PostInit();
+	void InitGLCapabilities();
+	void InitGLSubsystems();
 
 	void SwapBuffers(bool allowSwapBuffers, bool clearErrors);
 

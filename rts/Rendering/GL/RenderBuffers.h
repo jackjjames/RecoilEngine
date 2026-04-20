@@ -23,6 +23,7 @@
 #include <iterator>
 #include <algorithm>
 #include <type_traits>
+#include <utility>
 
 template <typename T>
 class TypedRenderBuffer;
@@ -58,6 +59,10 @@ public:
 			}
 		}
 	}
+	static void FinalizeFrameSubmission() {
+		SwapRenderBuffers();
+		IStreamBufferConcept::PutBufferLocks();
+	}
 
 	virtual void SwapBuffer() = 0;
 	virtual const char* GetBufferName() const = 0;
@@ -90,25 +95,31 @@ template <typename T>
 class RenderBufferShader {
 public:
 	static Shader::IProgramObject& GetShader() {
-
-		Shader::IProgramObject* shader = shaderHandler->GetProgramObject(poClass, typeName);
-
-		if (shader) {
-			if (!shader->IsReloadRequested())
-				return *shader;
-			else {
-				shaderHandler->ReleaseProgramObject(poClass, typeName);
-				shader = nullptr;
-			}
-		}
-
-		if (!shader)
-			shader = shaderHandler->CreateProgramObject(poClass, typeName);
+		Shader::IProgramObject* shader = AcquireProgramObject();
 
 #ifndef HEADLESS
 		assert(shader);
 #endif
 
+		const auto [vertSrc, fragSrc] = BuildShaderSources();
+		ConfigureProgramObject(*shader, vertSrc, fragSrc);
+		return *shader;
+	}
+private:
+	static Shader::IProgramObject* AcquireProgramObject() {
+		Shader::IProgramObject* shader = shaderHandler->GetProgramObject(poClass, typeName);
+
+		if (shader != nullptr) {
+			if (!shader->IsReloadRequested())
+				return shader;
+
+			shaderHandler->ReleaseProgramObject(poClass, typeName);
+		}
+
+		return shaderHandler->CreateProgramObject(poClass, typeName);
+	}
+
+	static std::pair<std::string, std::string> BuildShaderSources() {
 		std::string vertSrc = std::string(vsRenderBufferSrc);
 		std::string fragSrc = std::string(fsRenderBufferSrc);
 
@@ -142,29 +153,29 @@ public:
 			fragOutput
 		);
 
-		shader->AttachShaderObject(shaderHandler->CreateShaderObject(vertSrc, "", GL_VERTEX_SHADER));
-		shader->AttachShaderObject(shaderHandler->CreateShaderObject(fragSrc, "", GL_FRAGMENT_SHADER));
+		return {std::move(vertSrc), std::move(fragSrc)};
+	}
+
+	static void ConfigureProgramObject(Shader::IProgramObject& shader, const std::string& vertSrc, const std::string& fragSrc) {
+		shader.AttachShaderObject(shaderHandler->CreateShaderObject(vertSrc, "", GL_VERTEX_SHADER));
+		shader.AttachShaderObject(shaderHandler->CreateShaderObject(fragSrc, "", GL_FRAGMENT_SHADER));
 
 		if (!globalRendering->supportExplicitAttribLoc) {
 			for (const AttributeDef& ad : T::attributeDefs) {
-				shader->BindAttribLocation(fmt::format("a{}", ad.name), ad.index);
+				shader.BindAttribLocation(fmt::format("a{}", ad.name), ad.index);
 			}
 		}
 
-		shader->Link();
-
-		shader->Enable();
-		shader->Disable();
-
-		shader->Validate();
+		shader.Link();
+		shader.Enable();
+		shader.Disable();
+		shader.Validate();
 #ifndef HEADLESS
-		assert(shader->IsValid());
+		assert(shader.IsValid());
 #endif
-		shader->SetReloadComplete();
-
-		return *shader;
+		shader.SetReloadComplete();
 	}
-private:
+
 	static const std::string TypeToString(const AttributeDef& ad) {
 		static constexpr const char* fmtString = "{type}{count}";
 

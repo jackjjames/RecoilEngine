@@ -668,6 +668,24 @@ void CGlobalRendering::PostInit() {
 	UpdateTimer();
 }
 
+void CGlobalRendering::RefreshGLState()
+{
+	UpdateGLConfigs();
+	UpdateGLGeometry();
+	InitGLState();
+}
+
+void CGlobalRendering::BeginFrame()
+{
+	UpdateWindow();
+	UpdateTimer();
+}
+
+void CGlobalRendering::PresentFrame(bool allowSwapBuffers, bool clearErrors)
+{
+	SwapBuffers(allowSwapBuffers, clearErrors);
+}
+
 void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
 {
 	spring_time pre;

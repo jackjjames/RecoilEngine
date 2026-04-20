@@ -51,6 +51,11 @@ public:
 	void DestroyWindowAndContext();
 	void KillSDL() const;
 	void PostInit();
+	void InitGLCapabilities();
+	void InitGLSubsystems();
+	void RefreshGLState();
+	void BeginFrame();
+	void PresentFrame(bool allowSwapBuffers, bool clearErrors);
 
 	void SwapBuffers(bool allowSwapBuffers, bool clearErrors);
 

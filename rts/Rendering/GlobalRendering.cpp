@@ -9,8 +9,7 @@
 #include "GlobalRendering.h"
 #include "GlobalRenderingInfo.h"
 #include "Rendering/VerticalSync.h"
-#include "Rendering/Platform/GLPresenter.h"
-#include "Rendering/Platform/SDLGLRenderContext.h"
+#include "Rendering/GL/GLRenderBackend.h"
 #include "Rendering/GL/StreamBuffer.h"
 #include "Rendering/GL/RenderBuffers.h"
 #include "Rendering/GL/myGL.h"
@@ -346,8 +345,7 @@ CGlobalRendering::CGlobalRendering()
 	, forceDWMFlush(configHandler->GetInt("DWMFlush"))
 	, sdlWindow{nullptr}
 	, glContext{nullptr}
-	, renderContext(CreateSDLGLRenderContext())
-	, presenter(CreateGLPresenter())
+	, renderBackend(CreateGLRenderBackend())
 	, glExtensions{}
 	, glTimerQueries{0}
 {
@@ -400,7 +398,7 @@ void CGlobalRendering::PreKill()
 
 
 void CGlobalRendering::MakeCurrentContext(bool clear) const {
-	renderContext->MakeCurrent(sdlWindow, glContext, clear);
+	renderBackend->GetRenderContext().MakeCurrent(sdlWindow, glContext, clear);
 }
 
 void CGlobalRendering::PostInit() {
@@ -437,17 +435,17 @@ void CGlobalRendering::InitGLSubsystems()
 
 void CGlobalRendering::RefreshGLState()
 {
-	presenter->RefreshGLState(*this);
+	renderBackend->GetPresenter().RefreshGLState(*this);
 }
 
 void CGlobalRendering::BeginFrame()
 {
-	presenter->BeginFrame(*this);
+	renderBackend->GetPresenter().BeginFrame(*this);
 }
 
 void CGlobalRendering::PresentFrame(bool allowSwapBuffers, bool clearErrors)
 {
-	presenter->PresentFrame(*this, allowSwapBuffers, clearErrors);
+	renderBackend->GetPresenter().PresentFrame(*this, allowSwapBuffers, clearErrors);
 }
 
 void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
@@ -481,7 +479,7 @@ void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
 			}
 		#endif
 		
-		renderContext->SwapWindow(sdlWindow);
+		renderBackend->GetRenderContext().SwapWindow(sdlWindow);
 
 		#ifdef _WIN32
 			if (forceDWMFlush == 2){ 

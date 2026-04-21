@@ -5,7 +5,6 @@
 
 #include <memory>
 
-#include "Rendering/GL/GLRenderTarget.h"
 #include "Rendering/IRenderTarget.h"
 #include "System/type2.h"
 
@@ -63,7 +62,7 @@ namespace GL {
 		void CreateAttachments(const int2 size);
 		void AttachAttachments(GLuint texTarget);
 
-		std::unique_ptr<IRenderTarget> buffer = CreateGLRenderTarget();
+		std::unique_ptr<IRenderTarget> buffer;
 
 		GLuint bufferTextureIDs[ATTACHMENT_COUNT];
 		GLenum bufferAttachments[ATTACHMENT_COUNT];

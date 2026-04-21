@@ -195,12 +195,12 @@ std::unique_ptr<IRenderContext> CreateSDLGLRenderContext()
 
 SDL_Window* CGlobalRendering::CreateSDLWindow(const char* title) const
 {
-	return renderContext->CreateWindow(*this, title);
+	return renderBackend->GetRenderContext().CreateWindow(*this, title);
 }
 
 SDL_GLContext CGlobalRendering::CreateGLContext(const int2& minCtx)
 {
-	return renderContext->CreateContext(*this, sdlWindow, minCtx);
+	return renderBackend->GetRenderContext().CreateContext(*this, sdlWindow, minCtx);
 }
 
 bool CGlobalRendering::CreateWindowAndContext(const char* title)
@@ -283,10 +283,10 @@ bool CGlobalRendering::CreateWindowAndContext(const char* title)
 
 void CGlobalRendering::DestroyWindowAndContext()
 {
-	renderContext->DestroyWindowAndContext(*this);
+	renderBackend->GetRenderContext().DestroyWindowAndContext(*this);
 }
 
 void CGlobalRendering::KillSDL() const
 {
-	renderContext->KillSDL();
+	renderBackend->GetRenderContext().KillSDL();
 }

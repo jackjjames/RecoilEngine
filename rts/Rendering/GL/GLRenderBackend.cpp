@@ -2,8 +2,11 @@
 
 #include "GLRenderBackend.h"
 
+#include "Lua/LuaGLCapabilities.h"
 #include "Rendering/IRenderBackend.h"
 #include "Rendering/IRenderTarget.h"
+#include "Rendering/GlobalRendering.h"
+#include "Rendering/GL/FBO.h"
 #include "Rendering/GL/GLRenderTarget.h"
 #include "Rendering/Platform/GLPresenter.h"
 #include "Rendering/Platform/SDLGLRenderContext.h"
@@ -12,6 +15,27 @@
 #include <memory>
 
 namespace {
+
+LuaGLCapabilities BuildLuaGLCapabilities()
+{
+	LuaGLCapabilities caps;
+	caps.depthClamp = GLAD_GL_ARB_depth_clamp;
+	caps.alphaToCoverage = GLAD_GL_ARB_multisample;
+	caps.blendEquationSeparate = GLAD_GL_EXT_blend_equation_separate;
+	caps.blendFuncSeparate = GLAD_GL_EXT_blend_func_separate;
+	caps.stencilTwoSide = GLAD_GL_EXT_stencil_two_side;
+	caps.framebuffer = FBO::IsSupported();
+	caps.generateMipmap = IS_GL_FUNCTION_AVAILABLE(glGenerateMipmapEXT);
+	caps.occlusionQuery = GLAD_GL_ARB_occlusion_query;
+	caps.khrDebug = GLAD_GL_KHR_debug;
+	caps.shaders = globalRendering != nullptr && globalRendering->haveGL4;
+	caps.legacyImmediate = true;
+	caps.legacyMatrix = true;
+	caps.legacyLighting = true;
+	caps.displayLists = true;
+	caps.computeShader = GLAD_GL_ARB_compute_shader || GLAD_GL_VERSION_4_3;
+	return caps;
+}
 
 class GLRenderBackend final : public IRenderBackend
 {
@@ -61,9 +85,16 @@ public:
 		return CreateGLSampler(params);
 	}
 
+	const LuaGLCapabilities& GetLuaCapabilities() const override
+	{
+		luaCaps = BuildLuaGLCapabilities();
+		return luaCaps;
+	}
+
 private:
 	std::unique_ptr<IRenderContext> renderContext = CreateSDLGLRenderContext();
 	std::unique_ptr<IPresenter> presenter = CreateGLPresenter();
+	mutable LuaGLCapabilities luaCaps;
 };
 
 } // namespace

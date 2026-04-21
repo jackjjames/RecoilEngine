@@ -8,13 +8,14 @@
 //    requires the ARB_imaging extension)
 // - use materials instead of raw calls (again, handle dlists)
 //
-// Stage-2 renderer seam work still intentionally leaves the Lua OpenGL surface
-// on direct GL entry points. Stage 3 is where Lua GL, LuaVBO, LuaVAO, and
-// LuaShaders can move behind the IRenderBackend-owned interfaces introduced in
-// the engine bootstrap and presentation layers.
+// Stage 3 finished the first backend seam pass for Lua registration,
+// capabilities, and Lua-owned texture/FBO lifetime, but the draw surface still
+// executes raw GL commands. Stage 4 needs to split the remaining gl.* drawing
+// API into backend-neutral policy plus backend-specific execution.
 
 #include "Rendering/GL/myGL.h"
 
+#include <array>
 #include <vector>
 #include <algorithm>
 #include <optional>
@@ -30,6 +31,7 @@
 #include "LuaDisplayLists.h"
 #include "LuaFBOs.h"
 #include "LuaFonts.h"
+#include "LuaGLCapabilities.h"
 #include "LuaHandle.h"
 #include "LuaHashString.h"
 #include "LuaIO.h"
@@ -50,6 +52,7 @@
 #include "Map/ReadMap.h"
 #include "Rendering/Fonts/glFont.h"
 #include "Rendering/GlobalRendering.h"
+#include "Rendering/IRenderBackend.h"
 #include "Rendering/LineDrawer.h"
 #include "Rendering/ShadowHandler.h"
 #include "Rendering/LuaObjectDrawer.h"
@@ -286,206 +289,83 @@ void LuaOpenGL::Free()
 bool LuaOpenGL::PushEntries(lua_State* L)
 {
 	LuaOpenGLUtils::ResetState();
+	const LuaGLCapabilities& caps = globalRendering->renderBackend->GetLuaCapabilities();
+	const bool legacyImmediate = caps.legacyImmediate;
+	const bool legacyMatrix = caps.legacyMatrix;
+	const bool legacyLighting = caps.legacyLighting;
+	const bool legacyDisplayLists = caps.displayLists;
 
-	REGISTER_LUA_CFUNC(HasExtension);
-	REGISTER_LUA_CFUNC(GetNumber);
-	REGISTER_LUA_CFUNC(GetString);
+	struct LuaGLEntry {
+		const char* name;
+		lua_CFunction func;
+		bool enabled;
+	};
 
-	REGISTER_LUA_CFUNC(GetScreenViewTrans);
-	REGISTER_LUA_CFUNC(GetViewSizes);
-	REGISTER_LUA_CFUNC(GetViewRange);
+#define LUA_GL_ENTRY(fn) LuaGLEntry{#fn, fn, true}
+#define LUA_GL_ENTRY_IF(fn, cond) LuaGLEntry{#fn, fn, (cond)}
+	const std::array entries{
+		LUA_GL_ENTRY(HasExtension), LUA_GL_ENTRY(GetNumber), LUA_GL_ENTRY(GetString),
+		LUA_GL_ENTRY(GetScreenViewTrans), LUA_GL_ENTRY(GetViewSizes), LUA_GL_ENTRY(GetViewRange),
+		LUA_GL_ENTRY(DrawMiniMap), LUA_GL_ENTRY(SlaveMiniMap), LUA_GL_ENTRY(ConfigMiniMap),
+		LUA_GL_ENTRY(ResetState), LUA_GL_ENTRY_IF(ResetMatrices, legacyMatrix), LUA_GL_ENTRY(Clear), LUA_GL_ENTRY(SwapBuffers),
+		LUA_GL_ENTRY_IF(Lighting, legacyLighting), LUA_GL_ENTRY_IF(ShadeModel, legacyLighting), LUA_GL_ENTRY(Scissor), LUA_GL_ENTRY(Viewport),
+		LUA_GL_ENTRY(ColorMask), LUA_GL_ENTRY(DepthMask), LUA_GL_ENTRY(DepthTest), LUA_GL_ENTRY_IF(DepthClamp, caps.depthClamp),
+		LUA_GL_ENTRY(Culling), LUA_GL_ENTRY(LogicOp), LUA_GL_ENTRY_IF(Fog, legacyLighting), LUA_GL_ENTRY_IF(AlphaTest, legacyLighting),
+		LUA_GL_ENTRY_IF(AlphaToCoverage, caps.alphaToCoverage), LUA_GL_ENTRY_IF(LineStipple, legacyImmediate), LUA_GL_ENTRY(Blending),
+		LUA_GL_ENTRY(BlendEquation), LUA_GL_ENTRY(BlendFunc),
+		LUA_GL_ENTRY_IF(BlendEquationSeparate, caps.blendEquationSeparate),
+		LUA_GL_ENTRY_IF(BlendFuncSeparate, caps.blendFuncSeparate),
+		LUA_GL_ENTRY_IF(Material, legacyLighting), LUA_GL_ENTRY_IF(Color, legacyImmediate), LUA_GL_ENTRY(PolygonMode), LUA_GL_ENTRY(PolygonOffset),
+		LUA_GL_ENTRY(StencilTest), LUA_GL_ENTRY(StencilMask), LUA_GL_ENTRY(StencilFunc), LUA_GL_ENTRY(StencilOp),
+		LUA_GL_ENTRY_IF(StencilMaskSeparate, caps.stencilTwoSide),
+		LUA_GL_ENTRY_IF(StencilFuncSeparate, caps.stencilTwoSide),
+		LUA_GL_ENTRY_IF(StencilOpSeparate, caps.stencilTwoSide),
+		LUA_GL_ENTRY(LineWidth), LUA_GL_ENTRY(PointSize), LUA_GL_ENTRY(PointSprite), LUA_GL_ENTRY(PointParameter),
+		LUA_GL_ENTRY(Texture), LUA_GL_ENTRY(CreateTexture), LUA_GL_ENTRY(ChangeTextureParams), LUA_GL_ENTRY(DeleteTexture),
+		LUA_GL_ENTRY(TextureInfo), LUA_GL_ENTRY(CopyToTexture),
+		LUA_GL_ENTRY_IF(DeleteTextureFBO, caps.framebuffer), LUA_GL_ENTRY_IF(RenderToTexture, caps.framebuffer),
+		LUA_GL_ENTRY_IF(GenerateMipmap, caps.generateMipmap),
+		LUA_GL_ENTRY(ActiveTexture), LUA_GL_ENTRY(TexEnv), LUA_GL_ENTRY(MultiTexEnv), LUA_GL_ENTRY(TexGen),
+		LUA_GL_ENTRY(MultiTexGen), LUA_GL_ENTRY(BindImageTexture), LUA_GL_ENTRY(CreateTextureAtlas),
+		LUA_GL_ENTRY(FinalizeTextureAtlas), LUA_GL_ENTRY(DeleteTextureAtlas), LUA_GL_ENTRY(AddAtlasTexture),
+		LUA_GL_ENTRY(GetAtlasTexture), LUA_GL_ENTRY(GetEngineAtlasTextures),
+		LUA_GL_ENTRY_IF(Shape, legacyImmediate), LUA_GL_ENTRY_IF(BeginEnd, legacyImmediate), LUA_GL_ENTRY_IF(Vertex, legacyImmediate), LUA_GL_ENTRY_IF(Normal, legacyImmediate),
+		LUA_GL_ENTRY_IF(TexCoord, legacyImmediate), LUA_GL_ENTRY_IF(MultiTexCoord, legacyImmediate), LUA_GL_ENTRY_IF(SecondaryColor, legacyImmediate), LUA_GL_ENTRY_IF(FogCoord, legacyImmediate),
+		LUA_GL_ENTRY_IF(EdgeFlag, legacyImmediate), LUA_GL_ENTRY_IF(Rect, legacyImmediate), LUA_GL_ENTRY_IF(TexRect, legacyImmediate),
+		LUA_GL_ENTRY(DispatchCompute), LUA_GL_ENTRY(MemoryBarrier),
+		LUA_GL_ENTRY(BeginText), LUA_GL_ENTRY(Text), LUA_GL_ENTRY(EndText), LUA_GL_ENTRY(GetTextWidth), LUA_GL_ENTRY(GetTextHeight),
+		LUA_GL_ENTRY(Unit), LUA_GL_ENTRY(UnitRaw), LUA_GL_ENTRY(UnitTextures), LUA_GL_ENTRY(UnitShape),
+		LUA_GL_ENTRY(UnitShapeTextures), LUA_GL_ENTRY(UnitMultMatrix), LUA_GL_ENTRY(UnitPiece), LUA_GL_ENTRY(UnitPieceMatrix), LUA_GL_ENTRY(UnitPieceMultMatrix),
+		LUA_GL_ENTRY(Feature), LUA_GL_ENTRY(FeatureRaw), LUA_GL_ENTRY(FeatureTextures), LUA_GL_ENTRY(FeatureShape),
+		LUA_GL_ENTRY(FeatureShapeTextures), LUA_GL_ENTRY(FeatureMultMatrix), LUA_GL_ENTRY(FeaturePiece), LUA_GL_ENTRY(FeaturePieceMatrix), LUA_GL_ENTRY(FeaturePieceMultMatrix),
+		LUA_GL_ENTRY_IF(DrawListAtUnit, legacyDisplayLists && legacyMatrix), LUA_GL_ENTRY(DrawFuncAtUnit), LUA_GL_ENTRY(DrawGroundCircle), LUA_GL_ENTRY(DrawGroundQuad),
+		LUA_GL_ENTRY_IF(Light, legacyLighting), LUA_GL_ENTRY_IF(ClipPlane, legacyMatrix), LUA_GL_ENTRY(ClipDistance),
+		LUA_GL_ENTRY_IF(MatrixMode, legacyMatrix), LUA_GL_ENTRY_IF(LoadIdentity, legacyMatrix), LUA_GL_ENTRY_IF(LoadMatrix, legacyMatrix), LUA_GL_ENTRY_IF(MultMatrix, legacyMatrix),
+		LUA_GL_ENTRY_IF(Translate, legacyMatrix), LUA_GL_ENTRY_IF(Scale, legacyMatrix), LUA_GL_ENTRY_IF(Rotate, legacyMatrix), LUA_GL_ENTRY_IF(Ortho, legacyMatrix), LUA_GL_ENTRY_IF(Frustum, legacyMatrix),
+		LUA_GL_ENTRY_IF(PushMatrix, legacyMatrix), LUA_GL_ENTRY_IF(PopMatrix, legacyMatrix), LUA_GL_ENTRY_IF(PushPopMatrix, legacyMatrix), LUA_GL_ENTRY_IF(Billboard, legacyMatrix), LUA_GL_ENTRY_IF(GetMatrixData, legacyMatrix),
+		LUA_GL_ENTRY_IF(PushAttrib, legacyImmediate), LUA_GL_ENTRY_IF(PopAttrib, legacyImmediate), LUA_GL_ENTRY_IF(UnsafeState, legacyImmediate), LUA_GL_ENTRY_IF(GetFixedState, legacyImmediate),
+		LUA_GL_ENTRY_IF(CreateList, legacyDisplayLists), LUA_GL_ENTRY_IF(CallList, legacyDisplayLists), LUA_GL_ENTRY_IF(DeleteList, legacyDisplayLists),
+		LUA_GL_ENTRY(Flush), LUA_GL_ENTRY(Finish), LUA_GL_ENTRY(ReadPixels), LUA_GL_ENTRY(SaveImage),
+		LUA_GL_ENTRY_IF(CreateQuery, caps.occlusionQuery), LUA_GL_ENTRY_IF(DeleteQuery, caps.occlusionQuery),
+		LUA_GL_ENTRY_IF(RunQuery, caps.occlusionQuery), LUA_GL_ENTRY_IF(GetQuery, caps.occlusionQuery),
+		LUA_GL_ENTRY(GetGlobalTexNames), LUA_GL_ENTRY(GetGlobalTexCoords), LUA_GL_ENTRY(GetShadowMapParams),
+		LUA_GL_ENTRY(GetAtmosphere), LUA_GL_ENTRY(GetSun), LUA_GL_ENTRY(GetWaterRendering), LUA_GL_ENTRY(GetMapRendering),
+		LUA_GL_ENTRY_IF(ObjectLabel, caps.khrDebug), LUA_GL_ENTRY_IF(PushDebugGroup, caps.khrDebug), LUA_GL_ENTRY_IF(PopDebugGroup, caps.khrDebug),
+	};
+#undef LUA_GL_ENTRY
+#undef LUA_GL_ENTRY_IF
 
-	REGISTER_LUA_CFUNC(DrawMiniMap);
-	REGISTER_LUA_CFUNC(SlaveMiniMap);
-	REGISTER_LUA_CFUNC(ConfigMiniMap);
-
-	REGISTER_LUA_CFUNC(ResetState);
-	REGISTER_LUA_CFUNC(ResetMatrices);
-	REGISTER_LUA_CFUNC(Clear);
-	REGISTER_LUA_CFUNC(SwapBuffers);
-	REGISTER_LUA_CFUNC(Lighting);
-	REGISTER_LUA_CFUNC(ShadeModel);
-	REGISTER_LUA_CFUNC(Scissor);
-	REGISTER_LUA_CFUNC(Viewport);
-	REGISTER_LUA_CFUNC(ColorMask);
-	REGISTER_LUA_CFUNC(DepthMask);
-	REGISTER_LUA_CFUNC(DepthTest);
-	if (GLAD_GL_ARB_depth_clamp)
-		REGISTER_LUA_CFUNC(DepthClamp);
-
-	REGISTER_LUA_CFUNC(Culling);
-	REGISTER_LUA_CFUNC(LogicOp);
-	REGISTER_LUA_CFUNC(Fog);
-	REGISTER_LUA_CFUNC(AlphaTest);
-	if (GLAD_GL_ARB_multisample)
-		REGISTER_LUA_CFUNC(AlphaToCoverage);
-	REGISTER_LUA_CFUNC(LineStipple);
-	REGISTER_LUA_CFUNC(Blending);
-	REGISTER_LUA_CFUNC(BlendEquation);
-	REGISTER_LUA_CFUNC(BlendFunc);
-	if (GLAD_GL_EXT_blend_equation_separate)
-		REGISTER_LUA_CFUNC(BlendEquationSeparate);
-	if (GLAD_GL_EXT_blend_func_separate)
-		REGISTER_LUA_CFUNC(BlendFuncSeparate);
-
-	REGISTER_LUA_CFUNC(Material);
-	REGISTER_LUA_CFUNC(Color);
-
-	REGISTER_LUA_CFUNC(PolygonMode);
-	REGISTER_LUA_CFUNC(PolygonOffset);
-
-	REGISTER_LUA_CFUNC(StencilTest);
-	REGISTER_LUA_CFUNC(StencilMask);
-	REGISTER_LUA_CFUNC(StencilFunc);
-	REGISTER_LUA_CFUNC(StencilOp);
-	if (GLAD_GL_EXT_stencil_two_side) {
-		REGISTER_LUA_CFUNC(StencilMaskSeparate);
-		REGISTER_LUA_CFUNC(StencilFuncSeparate);
-		REGISTER_LUA_CFUNC(StencilOpSeparate);
+	for (const auto& entry: entries) {
+		if (entry.enabled)
+			LuaPushRawNamedCFunc(L, entry.name, entry.func);
 	}
 
-	REGISTER_LUA_CFUNC(LineWidth);
-	REGISTER_LUA_CFUNC(PointSize);
-	REGISTER_LUA_CFUNC(PointSprite);
-	REGISTER_LUA_CFUNC(PointParameter);
-
-	REGISTER_LUA_CFUNC(Texture);
-	REGISTER_LUA_CFUNC(CreateTexture);
-	REGISTER_LUA_CFUNC(ChangeTextureParams);
-	REGISTER_LUA_CFUNC(DeleteTexture);
-	REGISTER_LUA_CFUNC(TextureInfo);
-	REGISTER_LUA_CFUNC(CopyToTexture);
-	if (FBO::IsSupported()) {
-		// FIXME: obsolete
-		REGISTER_LUA_CFUNC(DeleteTextureFBO);
-		REGISTER_LUA_CFUNC(RenderToTexture);
-	}
-	if (IS_GL_FUNCTION_AVAILABLE(glGenerateMipmapEXT))
-		REGISTER_LUA_CFUNC(GenerateMipmap);
-
-	REGISTER_LUA_CFUNC(ActiveTexture);
-	REGISTER_LUA_CFUNC(TexEnv);
-	REGISTER_LUA_CFUNC(MultiTexEnv);
-	REGISTER_LUA_CFUNC(TexGen);
-	REGISTER_LUA_CFUNC(MultiTexGen);
-	REGISTER_LUA_CFUNC(BindImageTexture);
-	REGISTER_LUA_CFUNC(CreateTextureAtlas);
-	REGISTER_LUA_CFUNC(FinalizeTextureAtlas);
-	REGISTER_LUA_CFUNC(DeleteTextureAtlas);
-	REGISTER_LUA_CFUNC(AddAtlasTexture);
-	REGISTER_LUA_CFUNC(GetAtlasTexture);
-
-	REGISTER_LUA_CFUNC(GetEngineAtlasTextures);
-
-	REGISTER_LUA_CFUNC(Shape);
-	REGISTER_LUA_CFUNC(BeginEnd);
-	REGISTER_LUA_CFUNC(Vertex);
-	REGISTER_LUA_CFUNC(Normal);
-	REGISTER_LUA_CFUNC(TexCoord);
-	REGISTER_LUA_CFUNC(MultiTexCoord);
-	REGISTER_LUA_CFUNC(SecondaryColor);
-	REGISTER_LUA_CFUNC(FogCoord);
-	REGISTER_LUA_CFUNC(EdgeFlag);
-
-	REGISTER_LUA_CFUNC(Rect);
-	REGISTER_LUA_CFUNC(TexRect);
-
-	REGISTER_LUA_CFUNC(DispatchCompute);
-	REGISTER_LUA_CFUNC(MemoryBarrier);
-
-	REGISTER_LUA_CFUNC(BeginText);
-	REGISTER_LUA_CFUNC(Text);
-	REGISTER_LUA_CFUNC(EndText);
-	REGISTER_LUA_CFUNC(GetTextWidth);
-	REGISTER_LUA_CFUNC(GetTextHeight);
-
-	REGISTER_LUA_CFUNC(Unit);
-	REGISTER_LUA_CFUNC(UnitRaw);
-	REGISTER_LUA_CFUNC(UnitTextures);
-	REGISTER_LUA_CFUNC(UnitShape);
-	REGISTER_LUA_CFUNC(UnitShapeTextures);
-	REGISTER_LUA_CFUNC(UnitMultMatrix);
-	REGISTER_LUA_CFUNC(UnitPiece);
-	REGISTER_LUA_CFUNC(UnitPieceMatrix);
-	REGISTER_LUA_CFUNC(UnitPieceMultMatrix);
-
-	REGISTER_LUA_CFUNC(Feature);
-	REGISTER_LUA_CFUNC(FeatureRaw);
-	REGISTER_LUA_CFUNC(FeatureTextures);
-	REGISTER_LUA_CFUNC(FeatureShape);
-	REGISTER_LUA_CFUNC(FeatureShapeTextures);
-	REGISTER_LUA_CFUNC(FeatureMultMatrix);
-	REGISTER_LUA_CFUNC(FeaturePiece);
-	REGISTER_LUA_CFUNC(FeaturePieceMatrix);
-	REGISTER_LUA_CFUNC(FeaturePieceMultMatrix);
-
-	REGISTER_LUA_CFUNC(DrawListAtUnit);
-	REGISTER_LUA_CFUNC(DrawFuncAtUnit);
-	REGISTER_LUA_CFUNC(DrawGroundCircle);
-	REGISTER_LUA_CFUNC(DrawGroundQuad);
-
-	REGISTER_LUA_CFUNC(Light);
-	REGISTER_LUA_CFUNC(ClipPlane);
-	REGISTER_LUA_CFUNC(ClipDistance);
-
-	REGISTER_LUA_CFUNC(MatrixMode);
-	REGISTER_LUA_CFUNC(LoadIdentity);
-	REGISTER_LUA_CFUNC(LoadMatrix);
-	REGISTER_LUA_CFUNC(MultMatrix);
-	REGISTER_LUA_CFUNC(Translate);
-	REGISTER_LUA_CFUNC(Scale);
-	REGISTER_LUA_CFUNC(Rotate);
-	REGISTER_LUA_CFUNC(Ortho);
-	REGISTER_LUA_CFUNC(Frustum);
-	REGISTER_LUA_CFUNC(PushMatrix);
-	REGISTER_LUA_CFUNC(PopMatrix);
-	REGISTER_LUA_CFUNC(PushPopMatrix);
-	REGISTER_LUA_CFUNC(Billboard);
-	REGISTER_LUA_CFUNC(GetMatrixData);
-
-	REGISTER_LUA_CFUNC(PushAttrib);
-	REGISTER_LUA_CFUNC(PopAttrib);
-	REGISTER_LUA_CFUNC(UnsafeState);
-	REGISTER_LUA_CFUNC(GetFixedState);
-
-	REGISTER_LUA_CFUNC(CreateList);
-	REGISTER_LUA_CFUNC(CallList);
-	REGISTER_LUA_CFUNC(DeleteList);
-
-	REGISTER_LUA_CFUNC(Flush);
-	REGISTER_LUA_CFUNC(Finish);
-
-	REGISTER_LUA_CFUNC(ReadPixels);
-	REGISTER_LUA_CFUNC(SaveImage);
-
-	if (GLAD_GL_ARB_occlusion_query) {
-		REGISTER_LUA_CFUNC(CreateQuery);
-		REGISTER_LUA_CFUNC(DeleteQuery);
-		REGISTER_LUA_CFUNC(RunQuery);
-		REGISTER_LUA_CFUNC(GetQuery);
-	}
-
-	REGISTER_LUA_CFUNC(GetGlobalTexNames);
-	REGISTER_LUA_CFUNC(GetGlobalTexCoords);
-	REGISTER_LUA_CFUNC(GetShadowMapParams);
-
-	REGISTER_LUA_CFUNC(GetAtmosphere);
-	REGISTER_LUA_CFUNC(GetSun);
-	REGISTER_LUA_CFUNC(GetWaterRendering);
-	REGISTER_LUA_CFUNC(GetMapRendering);
-
-	if (GLAD_GL_KHR_debug) {
-		REGISTER_LUA_CFUNC(ObjectLabel);
-		REGISTER_LUA_CFUNC(PushDebugGroup);
-		REGISTER_LUA_CFUNC(PopDebugGroup);
-	}
-
-	if (canUseShaders)
+	if (caps.shaders && canUseShaders)
 		LuaShaders::PushEntries(L);
 
-	if (FBO::IsSupported()) {
-	 	LuaFBOs::PushEntries(L);
-	 	LuaRBOs::PushEntries(L);
+	if (caps.framebuffer) {
+		LuaFBOs::PushEntries(L);
+		LuaRBOs::PushEntries(L);
 	}
 
 	LuaVAOs::PushEntries(L);
@@ -4360,7 +4240,11 @@ int LuaOpenGL::CopyToTexture(lua_State* L)
 	if (tex == nullptr)
 		return 0;
 
-	glBindTexture(tex->target, tex->id);
+	if (tex->handle != nullptr) {
+		tex->handle->Bind();
+	} else {
+		glBindTexture(tex->target, tex->id);
+	}
 	glEnable(tex->target); // leave it bound and enabled
 
 	const auto xoff = (GLint)luaL_checknumber(L, 2);
@@ -4453,8 +4337,14 @@ int LuaOpenGL::GenerateMipmap(lua_State* L)
 	if (tex == nullptr)
 		return 0;
 
-	auto texBind = GL::TexBind(tex->target, tex->id);
-	glGenerateMipmapEXT(tex->target);
+	if (tex->handle != nullptr) {
+		tex->handle->Bind();
+		tex->handle->GenerateMipmaps();
+		tex->handle->Unbind();
+	} else {
+		auto texBind = GL::TexBind(tex->target, tex->id);
+		glGenerateMipmapEXT(tex->target);
+	}
 
 	return 0;
 }

@@ -17,6 +17,8 @@ namespace GL {
 	struct TextureCreationParams;
 }
 
+struct LuaGLCapabilities;
+
 class IRenderBackend
 {
 public:
@@ -31,4 +33,5 @@ public:
 	virtual std::unique_ptr<ITexture> CreateTexture2DArray(const int2& size, uint32_t numPages, uint32_t internalFormat, const GL::TextureCreationParams& params, bool wantCompress = true) const = 0;
 	virtual std::unique_ptr<ITexture> CreateImportedTexture(uint32_t texTarget, uint32_t textureId, const int2& size, uint32_t internalFormat, int32_t numLevels, uint32_t numPages = 1, bool takeOwnership = true) const = 0;
 	virtual std::unique_ptr<ISampler> CreateSampler(const GL::TextureCreationParams& params) const = 0;
+	virtual const LuaGLCapabilities& GetLuaCapabilities() const = 0;
 };

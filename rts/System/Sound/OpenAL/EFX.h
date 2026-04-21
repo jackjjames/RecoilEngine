@@ -5,9 +5,21 @@
 
 #include <string>
 
+#if defined(__has_include)
+#if __has_include(<AL/al.h>)
+#include <AL/al.h>
+#include <AL/alc.h>
+#include <AL/efx.h>
+#else
 #include <al.h>
 #include <alc.h>
 #include <efx.h>
+#endif
+#else
+#include <al.h>
+#include <alc.h>
+#include <efx.h>
+#endif
 
 #include "EFXPresets.h"
 #include "System/UnorderedMap.hpp"

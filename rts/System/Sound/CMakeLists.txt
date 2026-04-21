@@ -44,6 +44,19 @@ if    (NOT NO_SOUND)
 			OpenAL/VorbisShared.cpp
 		)
 
+	if(APPLE)
+		foreach(OPENAL_SOFT_PREFIX "/opt/homebrew/opt/openal-soft" "/usr/local/opt/openal-soft")
+			if(EXISTS "${OPENAL_SOFT_PREFIX}")
+				list(PREPEND CMAKE_PREFIX_PATH "${OPENAL_SOFT_PREFIX}")
+				if(EXISTS "${OPENAL_SOFT_PREFIX}/include/AL/efx.h" AND EXISTS "${OPENAL_SOFT_PREFIX}/lib/libopenal.dylib")
+					set(OPENAL_INCLUDE_DIR "${OPENAL_SOFT_PREFIX}/include" CACHE PATH "OpenAL include directory" FORCE)
+					set(OPENAL_LIBRARY "${OPENAL_SOFT_PREFIX}/lib/libopenal.dylib" CACHE FILEPATH "OpenAL library" FORCE)
+				endif()
+				break()
+			endif()
+		endforeach()
+	endif()
+
 	find_package_static(OpenAL 1.18.2 REQUIRED)
 	find_package_static(OggVorbis 1.3.4 REQUIRED)
 
@@ -51,6 +64,9 @@ if    (NOT NO_SOUND)
 
 	include_directories(${CMAKE_SOURCE_DIR}/include/)
 	include_directories(${CMAKE_SOURCE_DIR}/include/AL)
+	if(DEFINED OPENAL_INCLUDE_DIR AND EXISTS "${OPENAL_INCLUDE_DIR}/AL/al.h")
+		include_directories("${OPENAL_INCLUDE_DIR}/AL")
+	endif()
 
 	add_library(sound STATIC EXCLUDE_FROM_ALL ${soundSources})
 	target_link_libraries(sound SDL2::SDL2)

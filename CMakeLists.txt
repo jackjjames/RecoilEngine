@@ -98,6 +98,20 @@ if    (APPLE)
 	if    (MACOSX_BUNDLE)
 		add_definitions(-DMACOSX_BUNDLE)
 	endif (MACOSX_BUNDLE)
+
+	# Command Line Tools-only setups can miss the legacy libc++ include path that
+	# AppleClang probes by default. Fall back to the SDK copy so standard C++
+	# headers remain available without requiring full Xcode.
+	execute_process(
+		COMMAND xcrun --show-sdk-path
+		OUTPUT_VARIABLE APPLE_SDK_PATH
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+		ERROR_QUIET
+	)
+	set(APPLE_SDK_CXX_HEADERS "${APPLE_SDK_PATH}/usr/include/c++/v1")
+	if (EXISTS "${APPLE_SDK_CXX_HEADERS}" AND NOT EXISTS "/Library/Developer/CommandLineTools/usr/include/c++/v1/algorithm")
+		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem ${APPLE_SDK_CXX_HEADERS}")
+	endif()
 else  (APPLE)
 	set(MACOSX_BUNDLE FALSE)
 endif (APPLE)

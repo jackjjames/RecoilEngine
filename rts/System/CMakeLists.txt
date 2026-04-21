@@ -156,6 +156,7 @@ set(sources_engine_System_Platform_Windows
 	)
 
 set(sources_engine_System_Threading_Mac
+		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/Mac/CpuTopology.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/Mac/Signal.cpp"
 	)
 set(sources_engine_System_Threading_Linux

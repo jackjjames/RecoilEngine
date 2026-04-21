@@ -9,6 +9,7 @@
 #include "GlobalRendering.h"
 #include "GlobalRenderingInfo.h"
 #include "Rendering/VerticalSync.h"
+#include "Rendering/Platform/SDLGLRenderContext.h"
 #include "Rendering/GL/StreamBuffer.h"
 #include "Rendering/GL/RenderBuffers.h"
 #include "Rendering/GL/myGL.h"
@@ -344,6 +345,7 @@ CGlobalRendering::CGlobalRendering()
 	, forceDWMFlush(configHandler->GetInt("DWMFlush"))
 	, sdlWindow{nullptr}
 	, glContext{nullptr}
+	, renderContext(CreateSDLGLRenderContext())
 	, glExtensions{}
 	, glTimerQueries{0}
 {
@@ -396,7 +398,7 @@ void CGlobalRendering::PreKill()
 
 
 void CGlobalRendering::MakeCurrentContext(bool clear) const {
-	SDL_GL_MakeCurrent(sdlWindow, clear ? nullptr : glContext);
+	renderContext->MakeCurrent(sdlWindow, glContext, clear);
 }
 
 void CGlobalRendering::PostInit() {
@@ -480,7 +482,7 @@ void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
 			}
 		#endif
 		
-		SDL_GL_SwapWindow(sdlWindow);
+		renderContext->SwapWindow(sdlWindow);
 
 		#ifdef _WIN32
 			if (forceDWMFlush == 2){ 

@@ -16,6 +16,7 @@
 #include "Rendering/GL/FBO.h"
 #include "Rendering/GL/glExtra.h"
 #include "Rendering/GL/glxHandler.h"
+#include "Rendering/Shaders/ShaderHandler.h"
 #include "Rendering/UniformConstants.h"
 #include "Rendering/Fonts/glFont.h"
 #include "Rendering/Models/ModelsMemStorage.h"
@@ -408,6 +409,11 @@ void CGlobalRendering::PostInit() {
 	InitGLCapabilities();
 	InitGLSubsystems();
 	UpdateTimer();
+}
+
+IShaderPipeline* CGlobalRendering::CreateShaderPipeline(const std::string& poClass, const std::string& poName) const
+{
+	return shaderHandler->CreateShaderPipeline(poClass, poName);
 }
 
 void CGlobalRendering::InitGLCapabilities()

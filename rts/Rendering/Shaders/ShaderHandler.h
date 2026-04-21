@@ -8,6 +8,8 @@
 #include "Rendering/GL/myGL.h" //GLuint
 #include "System/UnorderedMap.hpp"
 
+class IShaderPipeline;
+
 namespace Shader {
 	struct IProgramObject;
 	struct IShaderObject;
@@ -34,6 +36,8 @@ public:
 
 	Shader::IProgramObject* GetProgramObject(const std::string& poClass, const std::string& poName);
 	Shader::IProgramObject* CreateProgramObject(const std::string& poClass, const std::string& poName);
+	IShaderPipeline* GetShaderPipeline(const std::string& poClass, const std::string& poName);
+	IShaderPipeline* CreateShaderPipeline(const std::string& poClass, const std::string& poName);
 	/**
 	 * @param soName The filepath to the shader.
 	 * @param soDefs Additional preprocessor flags passed as header.

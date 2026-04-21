@@ -15,6 +15,7 @@
 #include "System/type2.h"
 
 class SharedLib;
+class IShaderPipeline;
 struct SDL_version;
 struct SDL_Rect;
 struct SDL_Window;
@@ -54,6 +55,7 @@ public:
 	void PostInit();
 	void InitGLCapabilities();
 	void InitGLSubsystems();
+	IShaderPipeline* CreateShaderPipeline(const std::string& poClass, const std::string& poName) const;
 	void RefreshGLState();
 	void BeginFrame();
 	void PresentFrame(bool allowSwapBuffers, bool clearErrors);

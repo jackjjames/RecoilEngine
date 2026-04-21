@@ -9,12 +9,19 @@
 #include <memory>
 #include <vector>
 
+#include "Lua/LuaMatTexture.h"
+#include "Rendering/Shaders/IShaderPipeline.h"
 #include "ShaderStates.h"
-#include "Lua/LuaOpenGLUtils.h"
 #include "System/UnorderedMap.hpp"
 #include "System/StringHash.h"
 #include "System/Cpp11Compat.hpp"
 #include "Rendering/GL/VertexArrayTypes.h"
+
+struct lua_State;
+class LuaOpenGLUtils {
+public:
+	static bool ParseTextureImage(lua_State* L, LuaMatTexture& texUnit, const std::string& image);
+};
 
 struct fast_hash
 {
@@ -119,7 +126,7 @@ namespace Shader {
 		IProgramObject* prog = nullptr;
 	};
 
-	struct IProgramObject {
+	struct IProgramObject: public ::IShaderPipeline {
 	public:
 		IProgramObject(const std::string& poName);
 		virtual ~IProgramObject() {}
@@ -136,8 +143,8 @@ namespace Shader {
 		/// create the whole shader from a lua file
 		bool LoadFromLua(const std::string& filename);
 
-		virtual void BindAttribLocation(const std::string& name, uint32_t index) {}
-		virtual void BindOutputLocation(const std::string& name, uint32_t index) {}
+		void BindAttribLocation(const std::string& name, uint32_t index) override {}
+		void BindOutputLocation(const std::string& name, uint32_t index) override {}
 		template<typename VAT>
 		void BindAttribLocations();
 
@@ -146,16 +153,16 @@ namespace Shader {
 		[[nodiscard]] ShaderEnabledToken EnableScoped() {
 			return ShaderEnabledToken(this);
 		}
-		virtual void Enable();
-		virtual void Disable();
+		void Enable() override;
+		void Disable() override;
 		virtual void EnableRaw() {}
 		virtual void DisableRaw() {}
-		virtual void Link() = 0;
-		virtual bool Validate() = 0;
-		virtual void Release();
-		virtual void Reload(bool reloadFromDisk, bool validate) = 0;
+		void Link() override = 0;
+		bool Validate() override = 0;
+		void Release() override;
+		void Reload(bool reloadFromDisk, bool validate) override = 0;
 		/// attach single shader objects (vertex, frag, ...) to the program
-		void AttachShaderObject(IShaderObject* so);
+		void AttachShaderObject(IShaderObject* so) override;
 		bool RemoveShaderObject(GLenum soType);
 
 		void SetReloadComplete() {
@@ -171,15 +178,15 @@ namespace Shader {
 		}
 
 		bool IsBound() const { return bound; }
-		bool IsValid() const { return valid; }
+		bool IsValid() const override { return valid; }
 		bool IsShaderAttached(const IShaderObject* so) const {
 			return (std::find(shaderObjs.begin(), shaderObjs.end(), so) != shaderObjs.end());
 		}
 
-		unsigned int GetObjID() const { return objID; }
+		unsigned int GetObjID() const override { return objID; }
 
-		const std::string& GetName() const { return name; }
-		const std::string& GetLog() const { return log; }
+		const std::string& GetName() const override { return name; }
+		const std::string& GetLog() const override { return log; }
 
 		const std::vector<IShaderObject*>& GetAttachedShaderObjs() const { return shaderObjs; }
 		      std::vector<IShaderObject*>& GetAttachedShaderObjs()       { return shaderObjs; }

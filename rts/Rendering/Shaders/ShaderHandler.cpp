@@ -106,6 +106,11 @@ Shader::IProgramObject* CShaderHandler::GetProgramObject(const std::string& poCl
 	return (programObjects[poClass][poName]);
 }
 
+IShaderPipeline* CShaderHandler::GetShaderPipeline(const std::string& poClass, const std::string& poName)
+{
+	return GetProgramObject(poClass, poName);
+}
+
 
 Shader::IProgramObject* CShaderHandler::CreateProgramObject(const std::string& poClass, const std::string& poName) {
 	RECOIL_DETAILED_TRACY_ZONE;
@@ -129,6 +134,11 @@ Shader::IProgramObject* CShaderHandler::CreateProgramObject(const std::string& p
 #endif
 	programObjects[poClass][poName] = po;
 	return po;
+}
+
+IShaderPipeline* CShaderHandler::CreateShaderPipeline(const std::string& poClass, const std::string& poName)
+{
+	return CreateProgramObject(poClass, poName);
 }
 
 

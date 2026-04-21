@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstdlib> // malloc
+#include <algorithm>
 #include <iterator>
 #include <utility>
 

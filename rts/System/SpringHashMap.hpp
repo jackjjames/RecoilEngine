@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <algorithm>
 #include <iterator>
 #include <utility>
 

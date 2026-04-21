@@ -12,6 +12,7 @@
 #include <vector>
 #include <map>
 #include <memory>
+#include <functional>
 
 #include "smmalloc/smmalloc.h"
 
@@ -431,7 +432,8 @@ inline size_t StablePosAllocator<T>::Allocate(size_t numElems)
 	if (positionToSize.empty()) {
 		size_t returnPos = data.size();
 		data.resize(data.size() + numElems);
-		myLog("StablePosAllocator<T>::Allocate(%u) = %u [thread_id = %u]", uint32_t(numElems), uint32_t(returnPos), static_cast<uint32_t>(Threading::GetCurrentThreadId()));
+		const auto threadIdHash = static_cast<uint32_t>(std::hash<Threading::NativeThreadId>{}(Threading::GetCurrentThreadId()));
+		myLog("StablePosAllocator<T>::Allocate(%u) = %u [thread_id = %u]", uint32_t(numElems), uint32_t(returnPos), threadIdHash);
 		return returnPos;
 	}
 

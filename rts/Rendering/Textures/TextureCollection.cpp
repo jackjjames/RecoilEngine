@@ -15,7 +15,6 @@
 CTextureCollection::~CTextureCollection()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
-	glDeleteTextures(textureIDs.size(), textureIDs.data());
 }
 
 bool CTextureCollection::TextureExists(const std::string& name)
@@ -94,11 +93,12 @@ size_t CTextureCollection::AddTexFromFile(const std::string& name, const std::st
 size_t CTextureCollection::AddTexFromBitmap(const std::string& name, const std::string& filename, const CBitmap& bitmap)
 {
 	RECOIL_DETAILED_TRACY_ZONE;
-	const auto texID = bitmap.CreateMipMapTexture();
-	if (texID == 0)
+	auto textureHandle = bitmap.CreateMipMapTextureHandle();
+	if (textureHandle == nullptr)
 		return INVALID_TEXTURE_POS;
 
-	textureIDs.emplace_back(texID);
+	textureIDs.emplace_back(textureHandle->GetNativeId());
+	textureHandles.emplace_back(std::move(textureHandle));
 	textureNames.emplace_back(name);
 	texturePaths.emplace_back(filename);
 
@@ -112,8 +112,12 @@ size_t CTextureCollection::AddTexBlank(std::string name, int xsize, int ysize, c
 	bitmap.AllocDummy(c);
 	bitmap = bitmap.CreateRescaled(xsize, ysize);
 
-	const auto texID = bitmap.CreateTexture();
-	textureIDs.emplace_back(texID);
+	auto textureHandle = bitmap.CreateTextureHandle();
+	if (textureHandle == nullptr)
+		return INVALID_TEXTURE_POS;
+
+	textureIDs.emplace_back(textureHandle ? textureHandle->GetNativeId() : 0);
+	textureHandles.emplace_back(std::move(textureHandle));
 	textureNames.emplace_back(name);
 	texturePaths.emplace_back("");
 
@@ -131,15 +135,15 @@ bool CTextureCollection::DeleteTex(const std::string& name)
 	if (pos == textureNames.size() - 1) {
 		textureNames.pop_back();
 		texturePaths.pop_back();
-		glDeleteTextures(1, &textureIDs.back());
+		textureHandles.pop_back();
 		textureIDs.pop_back();
 		return true;
 	}
 
 	textureNames[pos] = textureNames.back(); textureNames.pop_back();
 	texturePaths[pos] = texturePaths.back(); texturePaths.pop_back();
+	textureHandles[pos] = std::move(textureHandles.back()); textureHandles.pop_back();
 
-	glDeleteTextures(1, &textureIDs[pos]);
 	textureIDs[pos] = textureIDs.back(); textureIDs.pop_back();
 	return true;
 }
@@ -147,7 +151,7 @@ bool CTextureCollection::DeleteTex(const std::string& name)
 void CTextureCollection::Reload()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
-	assert(textureIDs.size() == textureNames.size() && textureNames.size() == texturePaths.size());
+	assert(textureHandles.size() == textureIDs.size() && textureIDs.size() == textureNames.size() && textureNames.size() == texturePaths.size());
 	for (size_t i = 0; i < textureIDs.size(); ++i) {
 		if (texturePaths[i].empty())
 			continue; //skip fallback textures
@@ -156,11 +160,18 @@ void CTextureCollection::Reload()
 		if (!bitmap.Load(texturePaths[i]))
 			continue; //skip missing texture files
 
-		const auto texID = bitmap.CreateMipMapTexture(0.0f, 0.0f, 0, textureIDs[i]);
-		if (texID != textureIDs[i]) {
+		auto texture = bitmap.CreateMipMapTextureHandle(0.0f, 0.0f, 0, textureIDs[i]);
+		if (texture == nullptr || texture->GetNativeId() != textureIDs[i]) {
 			assert(false); //logic error, should never reach that point
-			glDeleteTextures(1, &textureIDs[i]);
-			textureIDs[i] = texID;
+			if (texture)
+				textureIDs[i] = texture->GetNativeId();
+			textureHandles[i] = std::move(texture);
+			continue;
 		}
+
+		if (textureHandles[i])
+			textureHandles[i]->DisOwn();
+
+		textureHandles[i] = std::move(texture);
 	}
 }

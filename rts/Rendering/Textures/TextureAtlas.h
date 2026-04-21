@@ -8,7 +8,7 @@
 
 #include "IAtlasAllocator.h"
 #include "AtlasedTexture.hpp"
-#include "Texture.hpp"
+#include "ITexture.h"
 #include "System/float4.h"
 #include "System/type2.h"
 #include "System/UnorderedMap.hpp"
@@ -119,7 +119,7 @@ public:
 	int2 GetSize() const;
 	std::string GetName() const { return name; }
 
-	uint32_t GetTexID() const { return atlasTex->GetId(); }
+	uint32_t GetTexID() const { return atlasTex ? atlasTex->GetNativeId() : 0; }
 	uint32_t GetTexTarget() const;
 	uint32_t GetNumPages() const;
 
@@ -128,7 +128,7 @@ public:
 
 	void BindTexture();
 	void UnbindTexture();
-	void DisOwnTexture() { atlasTex->DisOwn(); }
+	void DisOwnTexture() { if (atlasTex) atlasTex->DisOwn(); }
 	void SetName(const std::string& s) { name = s; }
 
 	static void SetDebug(bool b) { debug = b; }
@@ -189,7 +189,7 @@ protected:
 	spring::unordered_map<std::string, AtlasedTexture> textures;
 	spring::unordered_map<AtlasedTexture*, std::string> texToName;  // non-creg serialization
 
-	std::unique_ptr<GL::TextureBase> atlasTex;
+	std::unique_ptr<ITexture> atlasTex;
 
 	bool initialized = false;
 

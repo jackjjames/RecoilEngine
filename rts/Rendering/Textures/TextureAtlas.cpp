@@ -9,6 +9,7 @@
 #include "RowAtlasAlloc.h"
 #include "MultiPageAtlasAlloc.hpp"
 #include "Rendering/GlobalRendering.h"
+#include "Rendering/IRenderBackend.h"
 #include "Rendering/GL/myGL.h"
 #include "System/Config/ConfigHandler.h"
 #include "System/Log/ILog.h"
@@ -225,31 +226,42 @@ bool CTextureAtlas::CreateTexture()
 
 	GL::TextureCreationParams tcp {
 		//make function re-entrant
-		.texID = atlasTex ? atlasTex->GetId() : 0,
+		.texID = atlasTex ? atlasTex->GetNativeId() : 0,
 		.reqNumLevels = numLevels,
 		.linearMipMapFilter = true,
 		.linearTextureFilter = true,
 		.wrapMirror = false
 	};
 
+	std::unique_ptr<ITexture> newAtlasTex;
 	if (numPages > 1) {
-		atlasTex = std::make_unique<GL::Texture2DArray>(atlasSize, numPages, GL_RGBA8, tcp, true);
-		auto binding = atlasTex->ScopedBind();
-		const auto* atlasTexTyped = static_cast<GL::Texture2DArray*>(atlasTex.get());
+		newAtlasTex = globalRendering->renderBackend->CreateTexture2DArray(atlasSize, numPages, GL_RGBA8, tcp, true);
+		if (!newAtlasTex)
+			return false;
+
+		newAtlasTex->Bind();
 		for (uint32_t pageNum = 0; pageNum < numPages; ++pageNum) {
-			atlasTexTyped->UploadImage(atlasPages[pageNum].data(), pageNum);
+			newAtlasTex->UploadImage(atlasPages[pageNum].data(), pageNum);
 		}
-		atlasTexTyped->ProduceMipmaps();
+		newAtlasTex->GenerateMipmaps();
+		newAtlasTex->Unbind();
 	}
 	else {
-		atlasTex = std::make_unique<GL::Texture2D     >(atlasSize, GL_RGBA8, tcp, true);
-		auto binding = atlasTex->ScopedBind();
-		const auto* atlasTexTyped = static_cast<GL::Texture2D*     >(atlasTex.get());
-		atlasTexTyped->UploadImage(atlasPages.front().data());
-		atlasTexTyped->ProduceMipmaps();
+		newAtlasTex = globalRendering->renderBackend->CreateTexture2D(atlasSize, GL_RGBA8, tcp, true);
+		if (!newAtlasTex)
+			return false;
+
+		newAtlasTex->Bind();
+		newAtlasTex->UploadImage(atlasPages.front().data());
+		newAtlasTex->GenerateMipmaps();
+		newAtlasTex->Unbind();
 	}
 
-	return atlasTex && (atlasTex->GetId() > 0);
+	if (atlasTex && tcp.texID == atlasTex->GetNativeId())
+		atlasTex->DisOwn();
+
+	atlasTex = std::move(newAtlasTex);
+	return atlasTex && (atlasTex->GetNativeId() > 0);
 }
 
 
@@ -341,12 +353,12 @@ void CTextureAtlas::DumpTexture(const char* newFileName, const std::string& file
 
 	if (numPages > 1) {
 		for (uint32_t page = 0; page < numPages; ++page) {
-			glSaveTextureArray(atlasTex->GetId(), fmt::format("{}_{}.{}", filename, page, fileExt).c_str(), page);
+			glSaveTextureArray(atlasTex->GetNativeId(), fmt::format("{}_{}.{}", filename, page, fileExt).c_str(), page);
 		}
 	}
 	else {
 		filename += "." + fileExt;
-		glSaveTexture(atlasTex->GetId(), filename.c_str());
+		glSaveTexture(atlasTex->GetNativeId(), filename.c_str());
 	}
 }
 

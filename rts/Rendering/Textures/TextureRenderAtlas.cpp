@@ -9,6 +9,7 @@
 #include "MultiPageAtlasAlloc.hpp"
 
 #include "Rendering/GlobalRendering.h"
+#include "Rendering/IRenderBackend.h"
 #include "Rendering/GL/myGL.h"
 #include "Rendering/GL/FBO.h"
 #include "Rendering/GL/TexBind.h"
@@ -126,10 +127,7 @@ CTextureRenderAtlas::~CTextureRenderAtlas()
 		shaderHandler->ReleaseProgramObjects("[TextureRenderAtlas]");
 
 	for (auto& [_, entry] : filenameToTexID) {
-		if (entry.texID) {
-			glDeleteTextures(1, &entry.texID);
-			entry.texID = 0;
-		}
+		entry.texture.reset();
 	}
 
 	atlasTex = nullptr;
@@ -186,11 +184,11 @@ bool CTextureRenderAtlas::AddTexFromBitmapRaw(const std::string& name, const CBi
 	if (it == filenameToTexID.end()) {
 		// Assign stable index at insertion time so all icons sharing a file get the same index
 		const uint32_t stableIdx = static_cast<uint32_t>(filenameToTexID.size());
-		it = filenameToTexID.emplace(refFileName, FileTexEntry{ bm.CreateMipMapTexture(), stableIdx }).first;
+		it = filenameToTexID.emplace(refFileName, FileTexEntry{ bm.CreateMipMapTextureHandle(), stableIdx }).first;
 	}
 
 	const auto uniqueSubTex = UniqueSubTexture(
-		it->second.texID,
+		it->second.texture.get(),
 		it->second.stableIdx,
 		subTexCoords
 	);
@@ -277,7 +275,7 @@ uint32_t CTextureRenderAtlas::GetTexID() const
 	if (!atlasRendered)
 		return 0;
 
-	return atlasTex->GetId();
+	return atlasTex->GetNativeId();
 }
 
 int CTextureRenderAtlas::GetMinDim() const
@@ -325,13 +323,13 @@ bool CTextureRenderAtlas::DumpTexture(const std::string& fileExt) const
 	if (numPages > 1) {
 		for (uint32_t page = 0; page < numPages; ++page) {
 			for (uint32_t level = 0; level < numLevels; ++level) {
-				glSaveTextureArray(atlasTex->GetId(), fmt::format("{}_{}_{}.{}", atlasName, page, level, fileExt).c_str(), level, page);
+				glSaveTextureArray(atlasTex->GetNativeId(), fmt::format("{}_{}_{}.{}", atlasName, page, level, fileExt).c_str(), level, page);
 			}
 		}
 	}
 	else {
 		for (uint32_t level = 0; level < numLevels; ++level) {
-			glSaveTexture(atlasTex->GetId(), fmt::format("{}_{}.{}", atlasName, level, fileExt).c_str(), level);
+			glSaveTexture(atlasTex->GetNativeId(), fmt::format("{}_{}.{}", atlasName, level, fileExt).c_str(), level);
 		}
 	}
 
@@ -369,21 +367,25 @@ bool CTextureRenderAtlas::CreateAtlasTexture()
 	{
 		GL::TextureCreationParams tcp{
 			//make function re-entrant
-			.texID = atlasTex ? atlasTex->GetId() : 0,
+			.texID = atlasTex ? atlasTex->GetNativeId() : 0,
 			.reqNumLevels = numLevels,
 			.linearMipMapFilter = true,
 			.linearTextureFilter = true,
 			.wrapMirror = false
 		};
 
-		atlasTex = nullptr;
-
+		std::unique_ptr<ITexture> newAtlasTex;
 		if (numPages > 1) {
-			atlasTex = std::make_unique<GL::Texture2DArray>(atlasSize, numPages, glInternalType, tcp, true);
+			newAtlasTex = globalRendering->renderBackend->CreateTexture2DArray(atlasSize, numPages, glInternalType, tcp, true);
 		}
 		else {
-			atlasTex = std::make_unique<GL::Texture2D     >(atlasSize, glInternalType, tcp, true);
+			newAtlasTex = globalRendering->renderBackend->CreateTexture2D(atlasSize, glInternalType, tcp, true);
 		}
+
+		if (atlasTex && tcp.texID == atlasTex->GetNativeId())
+			atlasTex->DisOwn();
+
+		atlasTex = std::move(newAtlasTex);
 	}
 
 #ifdef HEADLESS
@@ -404,12 +406,12 @@ bool CTextureRenderAtlas::CreateAtlasTexture()
 		fbo.Init(false);
 		fbo.Bind();
 		if (numPages > 1)
-			fbo.AttachTextureLayer(atlasTex->GetId(), GL_COLOR_ATTACHMENT0, 0, 0);
+			fbo.AttachTextureLayer(atlasTex->GetNativeId(), GL_COLOR_ATTACHMENT0, 0, 0);
 		else
-			fbo.AttachTexture(atlasTex->GetId(), GL_TEXTURE_2D, GL_COLOR_ATTACHMENT0, 0);
+			fbo.AttachTexture(atlasTex->GetNativeId(), GL_TEXTURE_2D, GL_COLOR_ATTACHMENT0, 0);
 		fbo.CheckStatus("TEXTURE-RENDER-ATLAS");
 
-		atlasRendered = (fbo.IsValid() && atlasTex->GetId() > 0);
+		atlasRendered = (fbo.IsValid() && atlasTex->GetNativeId() > 0);
 
 		if (atlasRendered) {
 			auto& rb = RenderBuffer::GetTypedRenderBuffer<VA_TYPE_2DT>();
@@ -419,9 +421,9 @@ bool CTextureRenderAtlas::CreateAtlasTexture()
 					glViewport(0, 0, std::max(atlasSize.x >> level, 1u), std::max(atlasSize.y >> level, 1u));
 
 					if (numPages > 1)
-						fbo.AttachTextureLayer(atlasTex->GetId(), GL_COLOR_ATTACHMENT0, level, page);
+						fbo.AttachTextureLayer(atlasTex->GetNativeId(), GL_COLOR_ATTACHMENT0, level, page);
 					else
-						fbo.AttachTexture(atlasTex->GetId(), GL_TEXTURE_2D, GL_COLOR_ATTACHMENT0, level);
+						fbo.AttachTexture(atlasTex->GetNativeId(), GL_TEXTURE_2D, GL_COLOR_ATTACHMENT0, level);
 
 					glDrawBuffer(GL_COLOR_ATTACHMENT0);
 					glReadBuffer(GL_COLOR_ATTACHMENT0);
@@ -446,9 +448,9 @@ bool CTextureRenderAtlas::CreateAtlasTexture()
 						if (entry.texCoords.pageNum != page)
 							continue;
 
-						const auto& [srcTexID, _stableIdx, srcSubTC] = uniqueSubTextureMap[uniqTexName];
+						const auto& [srcTexture, _stableIdx, srcSubTC] = uniqueSubTextureMap[uniqTexName];
 
-						if (srcTexID == 0)
+						if (srcTexture == nullptr || srcTexture->GetNativeId() == 0)
 							continue;
 
 						// Raw inclusive pixel coords from allocator (level-0 space)
@@ -488,7 +490,7 @@ bool CTextureRenderAtlas::CreateAtlasTexture()
 						auto posBL = VA_TYPE_2DT{ .x = ndcX1, .y = ndcY2, .s = srcU1, .t = srcV2 };
 						auto posBR = VA_TYPE_2DT{ .x = ndcX2, .y = ndcY2, .s = srcU2, .t = srcV2 };
 
-						auto texBind = GL::TexBind(GL_TEXTURE_2D, srcTexID);
+						auto texBind = GL::TexBind(GL_TEXTURE_2D, srcTexture->GetNativeId());
 						shader->SetUniform("srcClamp", srcSubTC.x, srcSubTC.y, srcSubTC.z, srcSubTC.w);
 
 						// Use GL_LINEAR to avoid GL_NEAREST ambiguity at texel boundaries.
@@ -527,10 +529,7 @@ bool CTextureRenderAtlas::CreateAtlasTexture()
 		return false;
 
 	for (auto& [_, entry] : filenameToTexID) {
-		if (entry.texID) {
-			glDeleteTextures(1, &entry.texID);
-			entry.texID = 0;
-		}
+		entry.texture.reset();
 	}
 
 	return true;

@@ -7,6 +7,7 @@
 
 #include "TextureAtlas.h"
 #include "IAtlasAllocator.h"
+#include "ITexture.h"
 #include "System/type2.h"
 #include "System/float4.h"
 #include "System/Color.h"
@@ -20,7 +21,7 @@ namespace Shader {
 class CTextureRenderAtlas {
 public:
 	struct UniqueSubTexture {
-		uint32_t texID;
+		ITexture* texture = nullptr;
 		uint32_t stableIdx; // deterministic index for name generation (texID is non-deterministic)
 		float4 subTexCoords;
 		std::string GetName() const;
@@ -74,7 +75,7 @@ private:
 	bool AddTexFromBitmapRaw(const std::string& name, const CBitmap& bm, const float4& subTexCoords, const std::string& refFileName);
 
 	struct FileTexEntry {
-		uint32_t texID;
+		std::unique_ptr<ITexture> texture;
 		uint32_t stableIdx;
 	};
 	spring::unordered_map<std::string, FileTexEntry> filenameToTexID;
@@ -84,7 +85,7 @@ private:
 	CTextureAtlas::AllocatorType allocType;
 	uint32_t glInternalType;
 
-	std::unique_ptr<GL::TextureBase> atlasTex;
+	std::unique_ptr<ITexture> atlasTex;
 	std::unique_ptr<IAtlasAllocator> atlasAllocator;
 
 	std::string atlasName;

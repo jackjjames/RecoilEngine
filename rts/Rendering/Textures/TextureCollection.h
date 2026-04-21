@@ -1,7 +1,9 @@
 #pragma once
 
+#include <memory>
 #include <vector>
 #include "Bitmap.h"
+#include "ITexture.h"
 #include "System/Color.h"
 
 class CTextureCollection {
@@ -35,6 +37,7 @@ public:
 private:
 	std::vector<std::string> textureNames;
 	std::vector<std::string> texturePaths;
+	std::vector<std::unique_ptr<ITexture>> textureHandles;
 	std::vector<uint32_t> textureIDs;
 	static constexpr size_t INVALID_TEXTURE_POS = size_t(-1);
 };

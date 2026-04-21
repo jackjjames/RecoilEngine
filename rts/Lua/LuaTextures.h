@@ -3,11 +3,13 @@
 #ifndef LUA_TEXTURES_H
 #define LUA_TEXTURES_H
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "Rendering/GL/myGL.h"
-
+#include "Rendering/IRenderTarget.h"
+#include "Rendering/Textures/ITexture.h"
 
 class LuaTextures {
 public:
@@ -21,12 +23,19 @@ public:
 	}
 
 	void Clear() {
-		textureVec.clear();
-		textureMap.clear();
-		freeIndices.clear();
+		FreeAll();
 	}
 
 	struct Texture {
+		Texture() = default;
+		Texture(Texture&&) = default;
+		Texture& operator=(Texture&&) = default;
+		Texture(const Texture&) = delete;
+		Texture& operator=(const Texture&) = delete;
+
+		std::unique_ptr<ITexture> handle;
+		std::unique_ptr<IRenderTarget> renderTarget;
+
 		GLuint id = 0;
 
 		// FIXME: obsolete, use raw FBO's

@@ -1,15 +1,20 @@
 /* This file is part of the Spring engine (GPL v2 or later), see LICENSE.html */
 
 #include "LuaTextures.h"
-#include "Rendering/Textures/TextureFormat.h"
-#include "Rendering/GlobalRendering.h"
 #include "Rendering/GL/FBO.h"
+#include "Rendering/GL/GLRenderTarget.h"
 #include "Rendering/GL/TexBind.h"
+#include "Rendering/GlobalRendering.h"
+#include "Rendering/IRenderBackend.h"
+#include "Rendering/Textures/GL/GLTexture.h"
+#include "Rendering/Textures/TextureFormat.h"
 #include "System/SpringMath.h"
 #include "System/StringUtil.h"
 #include "System/Log/ILog.h"
 #include "System/Exceptions.h"
 #include "Lua/LuaFBOs.h"
+
+#include <algorithm>
 
 #include "fmt/format.h"
 
@@ -31,6 +36,17 @@ namespace Impl {
 			default: break;
 		}
 		return false;
+	}
+
+	static inline std::unique_ptr<ITexture> CreateLuaTextureHandle(GLenum target, GLuint texID, const LuaTextures::Texture& tex) {
+		const int2 size = {tex.xsize, tex.ysize};
+		const uint32_t numPages = std::max<GLsizei>(tex.zsize, 1);
+
+		if (globalRendering != nullptr && globalRendering->renderBackend != nullptr) {
+			return globalRendering->renderBackend->CreateImportedTexture(target, texID, size, tex.format, 1, numPages, true);
+		}
+
+		return CreateGLImportedTexture(target, texID, size, tex.format, 1, numPages, true);
 	}
 }
 
@@ -100,41 +116,50 @@ std::string LuaTextures::Create(const Texture& tex)
 
 	glBindTexture(tex.target, currentBinding); // revert the current binding
 
+	auto textureHandle = Impl::CreateLuaTextureHandle(tex.target, texID, tex);
+	if (textureHandle == nullptr || !textureHandle->IsValid()) {
+		glDeleteTextures(1, &texID);
+		return "";
+	}
+
 	GLuint fbo = 0;
 	GLuint fboDepth = 0;
+	std::unique_ptr<IRenderTarget> renderTarget;
 
 	if (tex.fbo != 0) {
 		if (!FBO::IsSupported()) {
-			glDeleteTextures(1, &texID);
+			textureHandle.reset();
 			return "";
 		}
 
 		GLint currentFBO;
 		glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &currentFBO);
 
-		glGenFramebuffersEXT(1, &fbo);
-		glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, fbo);
+		renderTarget = (globalRendering != nullptr && globalRendering->renderBackend != nullptr)
+			? globalRendering->renderBackend->CreateRenderTarget()
+			: CreateGLRenderTarget();
+
+		if (renderTarget == nullptr || !renderTarget->IsValid()) {
+			textureHandle.reset();
+			return "";
+		}
+
+		fbo = renderTarget->GetId();
+		renderTarget->Bind();
 
 		if (tex.fboDepth != 0) {
 			glGenRenderbuffersEXT(1, &fboDepth);
 			glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, fboDepth);
 			GLenum depthFormat = static_cast<GLenum>(CGlobalRendering::DepthBitsToFormat(globalRendering->supportDepthBufferBitDepth));
 			glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, depthFormat, tex.xsize, tex.ysize);
-			glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, fboDepth);
+			renderTarget->AttachRenderBuffer(GL_DEPTH_ATTACHMENT_EXT, fboDepth);
 		}
 
-		bool attachFailure = false;
-		try {
-			LuaFBOs::AttachObjectTexTarget(__func__, GL_FRAMEBUFFER_EXT, tex.target, texID, GL_COLOR_ATTACHMENT0_EXT, 0);
-		}
-		catch (const opengl_error& e) {
-			attachFailure = true;
-			LOG_L(L_ERROR, "[LuaTextures::%s] %s", __func__, e.what());
-		}
+		renderTarget->AttachTexture(GL_COLOR_ATTACHMENT0_EXT, texID, tex.target);
 
-		if (glCheckFramebufferStatus(GL_FRAMEBUFFER_EXT) != GL_FRAMEBUFFER_COMPLETE_EXT || attachFailure) {
-			glDeleteTextures(1, &texID);
-			glDeleteFramebuffersEXT(1, &fbo);
+		if (!renderTarget->IsComplete(__func__)) {
+			textureHandle.reset();
+			renderTarget.reset();
 			glDeleteRenderbuffersEXT(1, &fboDepth);
 			glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, currentFBO);
 			return "";
@@ -145,20 +170,37 @@ std::string LuaTextures::Create(const Texture& tex)
 
 	std::string str = fmt::format("{}{}", prefix, ++lastCode);
 
-	Texture newTex = tex;
-	newTex.id = texID;
-	newTex.fbo = fbo;
+	Texture newTex;
+	newTex.target = tex.target;
+	newTex.format = tex.format;
+	newTex.xsize = tex.xsize;
+	newTex.ysize = tex.ysize;
+	newTex.zsize = tex.zsize;
+	newTex.samples = tex.samples;
+	newTex.border = tex.border;
+	newTex.min_filter = tex.min_filter;
+	newTex.mag_filter = tex.mag_filter;
+	newTex.wrap_s = tex.wrap_s;
+	newTex.wrap_t = tex.wrap_t;
+	newTex.wrap_r = tex.wrap_r;
+	newTex.cmpFunc = tex.cmpFunc;
+	newTex.lodBias = tex.lodBias;
+	newTex.aniso = tex.aniso;
+	newTex.handle = std::move(textureHandle);
+	newTex.renderTarget = std::move(renderTarget);
+	newTex.id = newTex.handle->GetNativeId();
+	newTex.fbo = (newTex.renderTarget != nullptr) ? newTex.renderTarget->GetId() : fbo;
 	newTex.fboDepth = fboDepth;
 
 	if (freeIndices.empty()) {
 		textureMap.emplace(str, textureVec.size());
-		textureVec.emplace_back(newTex);
+		textureVec.emplace_back(std::move(newTex));
 		return str;
 	}
 
 	// recycle
 	textureMap[str] = freeIndices.back();
-	textureVec[freeIndices.back()] = newTex;
+	textureVec[freeIndices.back()] = std::move(newTex);
 	freeIndices.pop_back();
 	return str;
 }
@@ -170,7 +212,11 @@ bool LuaTextures::Bind(const std::string& name) const
 
 	if (it != textureMap.end()) {
 		const Texture& tex = textureVec[it->second];
-		glBindTexture(tex.target, tex.id);
+		if (tex.handle != nullptr) {
+			tex.handle->Bind();
+		} else {
+			glBindTexture(tex.target, tex.id);
+		}
 		return true;
 	}
 
@@ -183,12 +229,14 @@ bool LuaTextures::Free(const std::string& name)
 	const auto it = textureMap.find(name);
 
 	if (it != textureMap.end()) {
-		const Texture& tex = textureVec[it->second];
-		glDeleteTextures(1, &tex.id);
-
-		if (FBO::IsSupported()) {
-			glDeleteFramebuffersEXT(1, &tex.fbo);
+		Texture& tex = textureVec[it->second];
+		tex.handle.reset();
+		tex.id = 0;
+		tex.renderTarget.reset();
+		tex.fbo = 0;
+		if (tex.fboDepth != 0) {
 			glDeleteRenderbuffersEXT(1, &tex.fboDepth);
+			tex.fboDepth = 0;
 		}
 
 		freeIndices.push_back(it->second);
@@ -212,8 +260,9 @@ bool LuaTextures::FreeFBO(const std::string& name)
 
 	Texture& tex = textureVec[it->second];
 
-	glDeleteFramebuffersEXT(1, &tex.fbo);
-	glDeleteRenderbuffersEXT(1, &tex.fboDepth);
+	tex.renderTarget.reset();
+	if (tex.fboDepth != 0)
+		glDeleteRenderbuffersEXT(1, &tex.fboDepth);
 
 	tex.fbo = 0;
 	tex.fboDepth = 0;
@@ -224,12 +273,14 @@ bool LuaTextures::FreeFBO(const std::string& name)
 void LuaTextures::FreeAll()
 {
 	for (const auto& item: textureMap) {
-		const Texture& tex = textureVec[item.second];
-		glDeleteTextures(1, &tex.id);
-
-		if (FBO::IsSupported()) {
-			glDeleteFramebuffersEXT(1, &tex.fbo);
+		Texture& tex = textureVec[item.second];
+		tex.handle.reset();
+		tex.id = 0;
+		tex.renderTarget.reset();
+		tex.fbo = 0;
+		if (tex.fboDepth != 0) {
 			glDeleteRenderbuffersEXT(1, &tex.fboDepth);
+			tex.fboDepth = 0;
 		}
 	}
 

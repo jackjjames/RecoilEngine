@@ -22,14 +22,19 @@ public:
 		fbo.Unbind();
 	}
 
-	void AttachColor(unsigned int idx, GLuint texId, GLuint texTarget) override
+	void AttachNativeColor(unsigned int) override
 	{
-		fbo.AttachTexture(texId, texTarget, GL_COLOR_ATTACHMENT0_EXT + idx);
+		// GL render targets only attach explicit textures or renderbuffers.
 	}
 
-	void AttachDepth(GLuint texId, GLuint texTarget) override
+	void AttachTexture(GLenum attachment, GLuint texId, GLuint texTarget, int mipLevel, int zSlice) override
 	{
-		fbo.AttachTexture(texId, texTarget, GL_DEPTH_ATTACHMENT_EXT);
+		fbo.AttachTexture(texId, texTarget, attachment, mipLevel, zSlice);
+	}
+
+	void AttachRenderBuffer(GLenum attachment, GLuint rboId) override
+	{
+		fbo.AttachRenderBuffer(rboId, attachment);
 	}
 
 	void Detach(GLenum attachment) override

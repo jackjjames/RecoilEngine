@@ -3,10 +3,12 @@
 #ifndef LUA_FBOS_H
 #define LUA_FBOS_H
 
+#include <memory>
 #include <vector>
 #include <string>
 
 #include "Rendering/GL/myGL.h"
+#include "Rendering/IRenderTarget.h"
 
 struct lua_State;
 
@@ -19,6 +21,12 @@ public:
 	void Clear() { fbos.clear(); }
 
 	struct LuaFBO {
+		LuaFBO() = default;
+		LuaFBO(LuaFBO&&) = default;
+		LuaFBO& operator=(LuaFBO&&) = default;
+		LuaFBO(const LuaFBO&) = delete;
+		LuaFBO& operator=(const LuaFBO&) = delete;
+
 		void Init(lua_State* L);
 		void Free(lua_State* L);
 
@@ -29,6 +37,7 @@ public:
 		GLsizei xsize;
 		GLsizei ysize;
 		GLsizei zsize;
+		std::unique_ptr<IRenderTarget> renderTarget;
 	};
 
 	const LuaFBO* GetLuaFBO(lua_State* L, int index);

@@ -17,9 +17,14 @@
 #include "System/Exceptions.h"
 #include "fmt/format.h"
 
+#include <memory>
+#include <new>
+
 #include "System/Misc/TracyDefs.h"
 #include "Rendering/GL/FBO.h"
+#include "Rendering/GL/GLRenderTarget.h"
 #include "Rendering/GlobalRendering.h"
+#include "Rendering/IRenderBackend.h"
 
 
 /******************************************************************************
@@ -30,8 +35,9 @@
 LuaFBOs::~LuaFBOs()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
-	for (const auto* fbo: fbos) {
-		glDeleteFramebuffersEXT(1, &fbo->id);
+	for (auto* fbo: fbos) {
+		fbo->renderTarget.reset();
+		fbo->id = 0;
 	}
 }
 
@@ -175,6 +181,7 @@ void LuaFBOs::LuaFBO::Init(lua_State* L)
 	xsize = 0;
 	ysize = 0;
 	zsize = 0;
+	renderTarget.reset();
 }
 
 
@@ -187,7 +194,7 @@ void LuaFBOs::LuaFBO::Free(lua_State* L)
 	luaL_unref(L, LUA_REGISTRYINDEX, luaRef);
 	luaRef = LUA_NOREF;
 
-	glDeleteFramebuffersEXT(1, &id);
+	renderTarget.reset();
 	id = 0;
 
 	{
@@ -213,6 +220,7 @@ int LuaFBOs::meta_gc(lua_State* L)
 	RECOIL_DETAILED_TRACY_ZONE;
 	auto* fbo = static_cast<LuaFBO*>(luaL_checkudata(L, 1, "FBO"));
 	fbo->Free(L);
+	std::destroy_at(fbo);
 	return 0;
 }
 
@@ -248,21 +256,21 @@ int LuaFBOs::meta_newindex(lua_State* L)
 		if (type != 0) {
 			GLint currentFBO;
 			glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &currentFBO);
-			glBindFramebufferEXT(fbo->target, fbo->id);
+			fbo->renderTarget->Bind();
 			ApplyAttachment(L, 3, fbo, type);
 			glBindFramebufferEXT(fbo->target, currentFBO);
 		}
 		else if (key == "drawbuffers") {
 			GLint currentFBO;
 			glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &currentFBO);
-			glBindFramebufferEXT(fbo->target, fbo->id);
+			fbo->renderTarget->Bind();
 			ApplyDrawBuffers(L, 3);
 			glBindFramebufferEXT(fbo->target, currentFBO);
 		}
 		else if (key == "readbuffer") {
 			GLint currentFBO;
 			glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &currentFBO);
-			glBindFramebufferEXT(fbo->target, fbo->id);
+			fbo->renderTarget->Bind();
 
 			if (lua_isnumber(L, 3))
 				glReadBuffer((GLenum)lua_toint(L, 3));
@@ -297,10 +305,11 @@ bool LuaFBOs::AttachObject(
 	GLenum attachLevel
 ) {
 	RECOIL_DETAILED_TRACY_ZONE;
+	(void)funcName;
+
 	if (lua_isnil(L, index)) {
 		// nil object
-		glFramebufferTexture2DEXT(fbo->target, attachID, GL_TEXTURE_2D, 0, 0);
-		glFramebufferRenderbufferEXT(fbo->target, attachID, GL_RENDERBUFFER_EXT, 0);
+		fbo->renderTarget->Detach(attachID);
 		return true;
 	}
 	if (lua_israwstring(L, index)) {
@@ -314,12 +323,7 @@ bool LuaFBOs::AttachObject(
 		if (attachTarget == 0)
 			attachTarget = tex->target;
 
-		try {
-			AttachObjectTexTarget(funcName, fbo->target, attachTarget, tex->id, attachID, attachLevel);
-		}
-		catch (const opengl_error& e) {
-			luaL_error(L, "%s", e.what());
-		}
+		fbo->renderTarget->AttachTexture(attachID, tex->id, attachTarget, attachLevel);
 
 
 		fbo->xsize = tex->xsize;
@@ -334,10 +338,7 @@ bool LuaFBOs::AttachObject(
 	if (rbo == nullptr)
 		return false;
 
-	if (attachTarget == 0)
-		attachTarget = rbo->target;
-
-	glFramebufferRenderbufferEXT(fbo->target, attachID, attachTarget, rbo->id);
+	fbo->renderTarget->AttachRenderBuffer(attachID, rbo->id);
 
 	fbo->xsize = rbo->xsize;
 	fbo->ysize = rbo->ysize;
@@ -499,12 +500,21 @@ int LuaFBOs::CreateFBO(lua_State* L)
 	GLint currentFBO;
 	glGetIntegerv(bindTarget, &currentFBO);
 
-	glGenFramebuffersEXT(1, &fbo.id);
-	glBindFramebufferEXT(fbo.target, fbo.id);
+	fbo.renderTarget = (globalRendering != nullptr && globalRendering->renderBackend != nullptr)
+		? globalRendering->renderBackend->CreateRenderTarget()
+		: CreateGLRenderTarget();
+
+	if (fbo.renderTarget == nullptr || !fbo.renderTarget->IsValid()) {
+		luaL_unref(L, LUA_REGISTRYINDEX, fbo.luaRef);
+		return 0;
+	}
+
+	fbo.id = fbo.renderTarget->GetId();
+	fbo.renderTarget->Bind();
 
 
 	auto* fboPtr = static_cast<LuaFBO*>(lua_newuserdata(L, sizeof(LuaFBO)));
-	*fboPtr = fbo;
+	new (fboPtr) LuaFBO(std::move(fbo));
 
 	luaL_getmetatable(L, "FBO");
 	lua_setmetatable(L, -2);

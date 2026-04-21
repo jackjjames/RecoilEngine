@@ -9,13 +9,16 @@
 #include <IL/il.h>
 #include <SDL_video.h>
 
+#include "Rendering/GlobalRendering.h"
+#include "Rendering/IRenderBackend.h"
 #include "Rendering/GL/myGL.h"
 #ifndef HEADLESS
 	#include "System/TimeProfiler.h"
 #endif
 
 #include "Bitmap.h"
-#include "Rendering/GL/TexBind.h"
+#include "Rendering/Textures/GL/GLTexture.h"
+#include "Rendering/Textures/ITexture.h"
 #include "System/ScopedFPUSettings.h"
 #include "System/ContainerUtil.h"
 #include "System/SafeUtil.h"
@@ -1718,39 +1721,57 @@ bool CBitmap::SaveFloat(std::string const& filename) const
 
 
 #ifndef HEADLESS
-uint32_t CBitmap::CreateTexture(const GL::TextureCreationParams& tcp) const
+namespace {
+
+std::unique_ptr<ITexture> CreateTexture2DHandle(const int2& size, uint32_t internalFormat, const GL::TextureCreationParams& params, bool wantCompress)
+{
+	if (globalRendering != nullptr && globalRendering->renderBackend != nullptr)
+		return globalRendering->renderBackend->CreateTexture2D(size, internalFormat, params, wantCompress);
+
+	return CreateGLTexture2D(size, internalFormat, params, wantCompress);
+}
+
+std::unique_ptr<ITexture> CreateImportedTextureHandle(uint32_t texTarget, uint32_t textureId, const int2& size, uint32_t internalFormat, int32_t numLevels, uint32_t numPages = 1)
+{
+	if (globalRendering != nullptr && globalRendering->renderBackend != nullptr)
+		return globalRendering->renderBackend->CreateImportedTexture(texTarget, textureId, size, internalFormat, numLevels, numPages, true);
+
+	return CreateGLImportedTexture(texTarget, textureId, size, internalFormat, numLevels, numPages, true);
+}
+
+} // namespace
+
+std::unique_ptr<ITexture> CBitmap::CreateTextureHandle(const GL::TextureCreationParams& tcp) const
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 	if (compressed)
-		return CreateDDSTexture(tcp);
+		return CreateDDSTextureHandle(tcp);
 
 	if (GetMemSize() == 0)
-		return 0;
+		return nullptr;
 
-	uint32_t texID = tcp.texID;
 	const int32_t numLevels = tcp.reqNumLevels <= 0 ? GetReqNumLevels() : tcp.reqNumLevels;
-	const auto minFilter = tcp.GetMinFilter(numLevels);
-	const auto magFilter = tcp.GetMagFilter();
+	GL::TextureCreationParams params = tcp;
+	params.reqNumLevels = numLevels;
 
-	if (texID == 0)
-		glGenTextures(1, &texID);
+	auto texture = CreateTexture2DHandle(int2(xsize, ysize), GetIntFmt(), params, false);
+	if (texture == nullptr)
+		return nullptr;
 
-	auto binding = GL::TexBind(GL_TEXTURE_2D, texID);
+	texture->Bind();
+	texture->UploadImage(GetRawMem());
+	texture->GenerateMipmaps();
+	texture->Unbind();
 
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	return texture;
+}
 
-	if (tcp.lodBias != 0.0f)
-		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, tcp.lodBias);
-	if (tcp.aniso > 0.0f)
-		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, tcp.aniso);
+uint32_t CBitmap::CreateTexture(const GL::TextureCreationParams& tcp) const
+{
+	if (auto texture = CreateTextureHandle(tcp); texture != nullptr)
+		return texture->DisOwn();
 
-	RecoilBuildMipmaps(GL_TEXTURE_2D, GetIntFmt(), xsize, ysize, GetExtFmt(), dataType, GetRawMem(), numLevels);
-
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, magFilter);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minFilter);
-
-	return texID;
+	return 0;
 }
 
 
@@ -1763,7 +1784,7 @@ static void HandleDDSMipmap(GLenum target, int32_t numEmbeddedLevels, uint32_t m
 		glGenerateMipmap(target);
 }
 
-uint32_t CBitmap::CreateDDSTexture(const GL::TextureCreationParams& tcp) const
+std::unique_ptr<ITexture> CBitmap::CreateDDSTextureHandle(const GL::TextureCreationParams& tcp) const
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 	glPushAttrib(GL_TEXTURE_BIT);
@@ -1773,33 +1794,39 @@ uint32_t CBitmap::CreateDDSTexture(const GL::TextureCreationParams& tcp) const
 	if (texID == 0)
 		glGenTextures(1, &texID);
 
+	uint32_t texTarget = 0;
+	int32_t numLevels = 0;
+
 	switch (ddsimage.get_type()) {
 		case nv_dds::TextureNone:
 			glDeleteTextures(1, &texID);
 			texID = 0;
 			break;
 
-		case nv_dds::TextureFlat:    // 1D, 2D, and rectangle textures
-			glEnable(GL_TEXTURE_2D);
-			glBindTexture(GL_TEXTURE_2D, texID);
+		case nv_dds::TextureFlat: {
+			texTarget = GL_TEXTURE_2D;
+			glEnable(texTarget);
+			glBindTexture(texTarget, texID);
 
-			if (!ddsimage.upload_texture2D(0, GL_TEXTURE_2D)) {
+			if (!ddsimage.upload_texture2D(0, texTarget)) {
 				glDeleteTextures(1, &texID);
 				texID = 0;
 				break;
 			}
 
 			if (tcp.lodBias != 0.0f)
-				glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, tcp.lodBias);
+				glTexParameterf(texTarget, GL_TEXTURE_LOD_BIAS, tcp.lodBias);
 			if (tcp.aniso > 0.0f)
-				glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, tcp.aniso);
+				glTexParameterf(texTarget, GL_TEXTURE_MAX_ANISOTROPY_EXT, tcp.aniso);
 
-			HandleDDSMipmap(GL_TEXTURE_2D, ddsimage.get_num_mipmaps(), tcp.GetMinFilter(ddsimage.get_num_mipmaps()));
-			break;
+			numLevels = ddsimage.get_num_mipmaps();
+			HandleDDSMipmap(texTarget, numLevels, tcp.GetMinFilter(numLevels));
+		} break;
 
-		case nv_dds::Texture3D:
-			glEnable(GL_TEXTURE_3D);
-			glBindTexture(GL_TEXTURE_3D, texID);
+		case nv_dds::Texture3D: {
+			texTarget = GL_TEXTURE_3D;
+			glEnable(texTarget);
+			glBindTexture(texTarget, texID);
 
 			if (!ddsimage.upload_texture3D()) {
 				glDeleteTextures(1, &texID);
@@ -1808,14 +1835,16 @@ uint32_t CBitmap::CreateDDSTexture(const GL::TextureCreationParams& tcp) const
 			}
 
 			if (tcp.lodBias != 0.0f)
-				glTexParameterf(GL_TEXTURE_3D, GL_TEXTURE_LOD_BIAS, tcp.lodBias);
+				glTexParameterf(texTarget, GL_TEXTURE_LOD_BIAS, tcp.lodBias);
 
-			HandleDDSMipmap(GL_TEXTURE_3D, ddsimage.get_num_mipmaps(), tcp.GetMinFilter(ddsimage.get_num_mipmaps()));
-			break;
+			numLevels = ddsimage.get_num_mipmaps();
+			HandleDDSMipmap(texTarget, numLevels, tcp.GetMinFilter(numLevels));
+		} break;
 
-		case nv_dds::TextureCubemap:
-			glEnable(GL_TEXTURE_CUBE_MAP);
-			glBindTexture(GL_TEXTURE_CUBE_MAP, texID);
+		case nv_dds::TextureCubemap: {
+			texTarget = GL_TEXTURE_CUBE_MAP;
+			glEnable(texTarget);
+			glBindTexture(texTarget, texID);
 
 			if (!ddsimage.upload_textureCubemap()) {
 				glDeleteTextures(1, &texID);
@@ -1824,12 +1853,13 @@ uint32_t CBitmap::CreateDDSTexture(const GL::TextureCreationParams& tcp) const
 			}
 
 			if (tcp.lodBias != 0.0f)
-				glTexParameterf(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_LOD_BIAS, tcp.lodBias);
+				glTexParameterf(texTarget, GL_TEXTURE_LOD_BIAS, tcp.lodBias);
 			if (tcp.aniso > 0.0f)
-				glTexParameterf(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_ANISOTROPY_EXT, tcp.aniso);
+				glTexParameterf(texTarget, GL_TEXTURE_MAX_ANISOTROPY_EXT, tcp.aniso);
 
-			HandleDDSMipmap(GL_TEXTURE_CUBE_MAP, ddsimage.get_num_mipmaps(), tcp.GetMinFilter(ddsimage.get_num_mipmaps()));
-			break;
+			numLevels = ddsimage.get_num_mipmaps();
+			HandleDDSMipmap(texTarget, numLevels, tcp.GetMinFilter(numLevels));
+		} break;
 
 		default:
 			assert(false);
@@ -1837,9 +1867,31 @@ uint32_t CBitmap::CreateDDSTexture(const GL::TextureCreationParams& tcp) const
 	}
 
 	glPopAttrib();
-	return texID;
+
+	if (texID == 0)
+		return nullptr;
+
+	return CreateImportedTextureHandle(texTarget, texID, int2(xsize, ysize), 0u, numLevels);
+}
+
+uint32_t CBitmap::CreateDDSTexture(const GL::TextureCreationParams& tcp) const
+{
+	if (auto texture = CreateDDSTextureHandle(tcp); texture != nullptr)
+		return texture->DisOwn();
+
+	return 0;
 }
 #else  // !HEADLESS
+
+std::unique_ptr<ITexture> CBitmap::CreateTextureHandle(const GL::TextureCreationParams& tcp) const {
+	RECOIL_DETAILED_TRACY_ZONE;
+	return nullptr;
+}
+
+std::unique_ptr<ITexture> CBitmap::CreateDDSTextureHandle(const GL::TextureCreationParams& tcp) const {
+	RECOIL_DETAILED_TRACY_ZONE;
+	return nullptr;
+}
 
 uint32_t CBitmap::CreateTexture(const GL::TextureCreationParams& tcp) const {
 	RECOIL_DETAILED_TRACY_ZONE;
@@ -1853,7 +1905,7 @@ uint32_t CBitmap::CreateDDSTexture(const GL::TextureCreationParams& tcp) const {
 #endif // !HEADLESS
 
 
-uint32_t CBitmap::CreateMipMapTexture(float aniso, float lodBias, int32_t reqNumLevels, uint32_t texID) const
+std::unique_ptr<ITexture> CBitmap::CreateMipMapTextureHandle(float aniso, float lodBias, int32_t reqNumLevels, uint32_t texID) const
 {
 	GL::TextureCreationParams tcp;
 	tcp.texID = texID;
@@ -1861,7 +1913,15 @@ uint32_t CBitmap::CreateMipMapTexture(float aniso, float lodBias, int32_t reqNum
 	tcp.lodBias = lodBias;
 	tcp.reqNumLevels = reqNumLevels;
 
-	return CreateTexture(tcp);
+	return CreateTextureHandle(tcp);
+}
+
+uint32_t CBitmap::CreateMipMapTexture(float aniso, float lodBias, int32_t reqNumLevels, uint32_t texID) const
+{
+	if (auto texture = CreateMipMapTextureHandle(aniso, lodBias, reqNumLevels, texID); texture != nullptr)
+		return texture->DisOwn();
+
+	return 0;
 }
 
 void CBitmap::CreateAlpha(uint8_t red, uint8_t green, uint8_t blue)

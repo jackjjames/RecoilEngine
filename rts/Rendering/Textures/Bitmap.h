@@ -4,6 +4,7 @@
 #define _BITMAP_H
 
 #include <stdint.h>
+#include <memory>
 #include <string>
 #include <span>
 #include <vector>
@@ -16,6 +17,7 @@
 
 
 struct SDL_Surface;
+class ITexture;
 
 struct TextureCreationParams {
 	float aniso = 0.0f;
@@ -73,6 +75,9 @@ public:
 
 	bool Empty() const { return (memIdx == size_t(-1)); } // implies size=0
 
+	std::unique_ptr<ITexture> CreateTextureHandle(const GL::TextureCreationParams& tcp = GL::TextureCreationParams{}) const;
+	std::unique_ptr<ITexture> CreateMipMapTextureHandle(float aniso = 0.0f, float lodBias = 0.0f, int32_t reqNumLevels = 0, uint32_t texID = 0) const;
+	std::unique_ptr<ITexture> CreateDDSTextureHandle(const GL::TextureCreationParams& tcp = GL::TextureCreationParams{}) const;
 	uint32_t CreateTexture(const GL::TextureCreationParams& tcp = GL::TextureCreationParams{}) const;
 	uint32_t CreateMipMapTexture(float aniso = 0.0f, float lodBias = 0.0f, int32_t reqNumLevels = 0, uint32_t texID = 0) const;
 	uint32_t CreateDDSTexture(const GL::TextureCreationParams& tcp = GL::TextureCreationParams{}) const;

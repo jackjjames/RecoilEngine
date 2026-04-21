@@ -51,28 +51,56 @@ GLTexture::GLTexture(std::unique_ptr<GL::TextureBase>&& texture_)
 {
 }
 
+GLTexture::GLTexture(uint32_t texTarget_, uint32_t textureId, const int2& size_, uint32_t internalFormat_, int32_t numLevels_, uint32_t numPages_, bool ownTextureId)
+	: rawTextureId(textureId)
+	, texTarget(texTarget_)
+	, internalFormat(internalFormat_)
+	, numPages(numPages_)
+	, numLevels(numLevels_)
+	, size(size_)
+	, ownRawTextureId(ownTextureId)
+{
+}
+
+GLTexture::~GLTexture()
+{
+	if (texture == nullptr && ownRawTextureId && rawTextureId != 0)
+		glDeleteTextures(1, &rawTextureId);
+}
+
 bool GLTexture::IsValid() const
 {
-	return texture && texture->IsValid();
+	return (texture != nullptr)
+		? texture->IsValid()
+		: (rawTextureId != 0);
 }
 
 uint32_t GLTexture::GetNativeId() const
 {
-	return texture ? texture->GetId() : 0;
+	return (texture != nullptr)
+		? texture->GetId()
+		: rawTextureId;
 }
 
 uint32_t GLTexture::GetTarget() const
 {
-	return texture ? texture->GetTarget() : 0;
+	return (texture != nullptr)
+		? texture->GetTarget()
+		: texTarget;
 }
 
 uint32_t GLTexture::GetInternalFormat() const
 {
-	return texture ? texture->GetInternalFormat() : 0;
+	return (texture != nullptr)
+		? texture->GetInternalFormat()
+		: internalFormat;
 }
 
 uint32_t GLTexture::GetNumPages() const
 {
+	if (texture == nullptr)
+		return numPages;
+
 	if (const auto* texArray = GetAs<GL::Texture2DArray>())
 		return texArray->GetNumPages();
 
@@ -81,11 +109,16 @@ uint32_t GLTexture::GetNumPages() const
 
 int32_t GLTexture::GetNumLevels() const
 {
-	return texture ? texture->GetNumLevels() : 0;
+	return (texture != nullptr)
+		? texture->GetNumLevels()
+		: numLevels;
 }
 
 int2 GLTexture::GetSize() const
 {
+	if (texture == nullptr)
+		return size;
+
 	if (const auto* tex2D = GetAs<GL::Texture2D>())
 		return tex2D->GetSize();
 
@@ -97,22 +130,44 @@ int2 GLTexture::GetSize() const
 
 void GLTexture::Bind()
 {
-	texture->Bind();
+	if (texture != nullptr) {
+		texture->Bind();
+		return;
+	}
+
+	glBindTexture(texTarget, rawTextureId);
 }
 
 void GLTexture::Bind(uint32_t relSlot)
 {
-	texture->Bind(relSlot);
+	if (texture != nullptr) {
+		texture->Bind(relSlot);
+		return;
+	}
+
+	glActiveTexture(GL_TEXTURE0 + relSlot);
+	glBindTexture(texTarget, rawTextureId);
 }
 
 void GLTexture::Unbind()
 {
-	texture->Unbind();
+	if (texture != nullptr) {
+		texture->Unbind();
+		return;
+	}
+
+	glBindTexture(texTarget, 0);
 }
 
 void GLTexture::Unbind(uint32_t relSlot)
 {
-	texture->Unbind(relSlot);
+	if (texture != nullptr) {
+		texture->Unbind(relSlot);
+		return;
+	}
+
+	glActiveTexture(GL_TEXTURE0 + relSlot);
+	glBindTexture(texTarget, 0);
 }
 
 void GLTexture::UploadImage(const void* data, uint32_t layer, int level)
@@ -124,6 +179,11 @@ void GLTexture::UploadImage(const void* data, uint32_t layer, int level)
 
 	if (auto* texArray = GetAs<GL::Texture2DArray>()) {
 		texArray->UploadImage(data, layer, level);
+		return;
+	}
+
+	if (texture == nullptr) {
+		UploadSubImage(data, 0, 0, size.x, size.y, layer, level);
 		return;
 	}
 
@@ -142,17 +202,41 @@ void GLTexture::UploadSubImage(const void* data, int xOffset, int yOffset, int w
 		return;
 	}
 
+	if (texture == nullptr) {
+		const auto extFormat = GetExternalFormatFromInternalFormat(internalFormat);
+		const auto dataType = GetDataTypeFromInternalFormat(internalFormat);
+
+		if (texTarget == GL_TEXTURE_2D) {
+			glTexSubImage2D(texTarget, level, xOffset, yOffset, width, height, extFormat, dataType, data);
+			return;
+		}
+
+		if (texTarget == GL_TEXTURE_2D_ARRAY || texTarget == GL_TEXTURE_3D) {
+			glTexSubImage3D(texTarget, level, xOffset, yOffset, layer, width, height, 1, extFormat, dataType, data);
+			return;
+		}
+	}
+
 	assert(false);
 }
 
 void GLTexture::GenerateMipmaps()
 {
-	texture->ProduceMipmaps();
+	if (texture != nullptr) {
+		texture->ProduceMipmaps();
+		return;
+	}
+
+	glGenerateMipmap(texTarget);
 }
 
 uint32_t GLTexture::DisOwn()
 {
-	return texture ? texture->DisOwn() : 0u;
+	if (texture != nullptr)
+		return texture->DisOwn();
+
+	ownRawTextureId = false;
+	return rawTextureId;
 }
 
 GLSampler::GLSampler(GL::TextureCreationParams params_)
@@ -173,6 +257,11 @@ std::unique_ptr<ITexture> CreateGLTexture2D(const int2& size, uint32_t internalF
 std::unique_ptr<ITexture> CreateGLTexture2DArray(const int2& size, uint32_t numPages, uint32_t internalFormat, const GL::TextureCreationParams& params, bool wantCompress)
 {
 	return std::make_unique<GLTexture>(std::make_unique<GL::Texture2DArray>(size, numPages, internalFormat, params, wantCompress));
+}
+
+std::unique_ptr<ITexture> CreateGLImportedTexture(uint32_t texTarget, uint32_t textureId, const int2& size, uint32_t internalFormat, int32_t numLevels, uint32_t numPages, bool takeOwnership)
+{
+	return std::make_unique<GLTexture>(texTarget, textureId, size, internalFormat, numLevels, numPages, takeOwnership);
 }
 
 std::unique_ptr<ISampler> CreateGLSampler(const GL::TextureCreationParams& params)

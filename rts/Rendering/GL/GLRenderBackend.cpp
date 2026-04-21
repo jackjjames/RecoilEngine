@@ -51,6 +51,11 @@ public:
 		return CreateGLTexture2DArray(size, numPages, internalFormat, params, wantCompress);
 	}
 
+	std::unique_ptr<ITexture> CreateImportedTexture(uint32_t texTarget, uint32_t textureId, const int2& size, uint32_t internalFormat, int32_t numLevels, uint32_t numPages, bool takeOwnership) const override
+	{
+		return CreateGLImportedTexture(texTarget, textureId, size, internalFormat, numLevels, numPages, takeOwnership);
+	}
+
 	std::unique_ptr<ISampler> CreateSampler(const GL::TextureCreationParams& params) const override
 	{
 		return CreateGLSampler(params);

@@ -9,7 +9,10 @@
 class GLTexture final : public ITexture
 {
 public:
+	~GLTexture() override;
+
 	explicit GLTexture(std::unique_ptr<GL::TextureBase>&& texture_);
+	GLTexture(uint32_t texTarget, uint32_t textureId, const int2& size, uint32_t internalFormat, int32_t numLevels, uint32_t numPages = 1, bool ownTextureId = true);
 
 	bool IsValid() const override;
 	uint32_t GetNativeId() const override;
@@ -41,6 +44,13 @@ private:
 
 private:
 	std::unique_ptr<GL::TextureBase> texture;
+	uint32_t rawTextureId = 0;
+	uint32_t texTarget = 0;
+	uint32_t internalFormat = 0;
+	uint32_t numPages = 1;
+	int32_t numLevels = 0;
+	int2 size;
+	bool ownRawTextureId = false;
 };
 
 class GLSampler final : public ISampler
@@ -57,4 +67,5 @@ private:
 
 std::unique_ptr<ITexture> CreateGLTexture2D(const int2& size, uint32_t internalFormat, const GL::TextureCreationParams& params, bool wantCompress = true);
 std::unique_ptr<ITexture> CreateGLTexture2DArray(const int2& size, uint32_t numPages, uint32_t internalFormat, const GL::TextureCreationParams& params, bool wantCompress = true);
+std::unique_ptr<ITexture> CreateGLImportedTexture(uint32_t texTarget, uint32_t textureId, const int2& size, uint32_t internalFormat, int32_t numLevels, uint32_t numPages = 1, bool takeOwnership = true);
 std::unique_ptr<ISampler> CreateGLSampler(const GL::TextureCreationParams& params);

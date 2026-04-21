@@ -1,8 +1,9 @@
 /* This file is part of the Spring engine (GPL v2 or later), see LICENSE.html */
 
-// Stage-1 renderer seam work keeps this legacy world draw path GL-owned on
-// purpose. Backend-neutral world drawing is a follow-up step after bootstrap,
-// presentation, and engine-managed resource seams are in place.
+// Stage-2 renderer seam work still keeps this legacy world draw path GL-owned
+// on purpose. Stage 3 can start moving world drawing over once the
+// IRenderBackend, IPresenter, and render-target seams are stable enough to own
+// backend-neutral draw policy.
 
 #include "Rendering/GL/myGL.h"
 

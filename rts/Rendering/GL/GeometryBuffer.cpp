@@ -74,6 +74,8 @@ void GL::GeometryBuffer::Init(bool ctor) {
 	assert(!dead || !ctor);
 
 	ResetAttachments();
+	if (buffer == nullptr)
+		buffer = globalRendering->renderBackend->CreateRenderTarget();
 
 	// NOTE:
 	//   initial buffer size must be 0 s.t. prevSize != currSize when !init

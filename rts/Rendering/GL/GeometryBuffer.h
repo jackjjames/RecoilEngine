@@ -3,7 +3,10 @@
 #ifndef GEOMETRYBUFFER_H
 #define GEOMETRYBUFFER_H
 
-#include "Rendering/GL/FBO.h"
+#include <memory>
+
+#include "Rendering/GL/GLRenderTarget.h"
+#include "Rendering/IRenderTarget.h"
 #include "System/type2.h"
 
 namespace GL {
@@ -33,7 +36,7 @@ namespace GL {
 		static void LoadViewport();
 
 		bool HasAttachments() const { return (bufferTextureIDs[0] != 0); }
-		bool Valid() const { return (buffer.IsValid()); }
+		bool Valid() const { return buffer->IsValid(); }
 		bool Create(const int2 size);
 		bool Update(const bool init);
 
@@ -41,11 +44,11 @@ namespace GL {
 		GLuint GetBufferTexture(unsigned int idx) const { return bufferTextureIDs[idx]; }
 		GLuint GetBufferAttachment(unsigned int idx) const { return bufferAttachments[idx]; }
 
-		const FBO& GetObject() const { return buffer; }
-		      FBO& GetObject()       { return buffer; }
+		const IRenderTarget& GetObject() const { return *buffer; }
+		      IRenderTarget& GetObject()       { return *buffer; }
 
-		void Bind() { assert(!dead && !bound); buffer.Bind(); bound = true; }
-		void UnBind() { assert(!dead && bound); buffer.Unbind(); bound = false; }
+		void Bind() { assert(!dead && !bound); buffer->Bind(); bound = true; }
+		void UnBind() { assert(!dead && bound); buffer->Unbind(); bound = false; }
 
 		void SetDepthRange(float nearDepth, float farDepth) const;
 
@@ -60,7 +63,7 @@ namespace GL {
 		void CreateAttachments(const int2 size);
 		void AttachAttachments(GLuint texTarget);
 
-		FBO buffer;
+		std::unique_ptr<IRenderTarget> buffer = CreateGLRenderTarget();
 
 		GLuint bufferTextureIDs[ATTACHMENT_COUNT];
 		GLenum bufferAttachments[ATTACHMENT_COUNT];

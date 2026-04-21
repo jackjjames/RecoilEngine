@@ -8,6 +8,7 @@
 #include <array>
 
 #include "Rendering/Platform/IRenderContext.h"
+#include "Rendering/Platform/IPresenter.h"
 #include "System/Matrix44f.h"
 #include "System/creg/creg_cond.h"
 #include "System/Misc/SpringTime.h"
@@ -390,6 +391,7 @@ public:
 	SDL_Window* sdlWindow;
 	SDL_GLContext glContext;
 	std::unique_ptr<IRenderContext> renderContext;
+	std::unique_ptr<IPresenter> presenter;
 public:
 	/**
 	* @brief maximum texture unit number

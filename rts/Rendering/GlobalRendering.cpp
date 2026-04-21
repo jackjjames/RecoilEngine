@@ -9,6 +9,7 @@
 #include "GlobalRendering.h"
 #include "GlobalRenderingInfo.h"
 #include "Rendering/VerticalSync.h"
+#include "Rendering/Platform/GLPresenter.h"
 #include "Rendering/Platform/SDLGLRenderContext.h"
 #include "Rendering/GL/StreamBuffer.h"
 #include "Rendering/GL/RenderBuffers.h"
@@ -346,6 +347,7 @@ CGlobalRendering::CGlobalRendering()
 	, sdlWindow{nullptr}
 	, glContext{nullptr}
 	, renderContext(CreateSDLGLRenderContext())
+	, presenter(CreateGLPresenter())
 	, glExtensions{}
 	, glTimerQueries{0}
 {
@@ -435,20 +437,17 @@ void CGlobalRendering::InitGLSubsystems()
 
 void CGlobalRendering::RefreshGLState()
 {
-	UpdateGLConfigs();
-	UpdateGLGeometry();
-	InitGLState();
+	presenter->RefreshGLState(*this);
 }
 
 void CGlobalRendering::BeginFrame()
 {
-	UpdateWindow();
-	UpdateTimer();
+	presenter->BeginFrame(*this);
 }
 
 void CGlobalRendering::PresentFrame(bool allowSwapBuffers, bool clearErrors)
 {
-	SwapBuffers(allowSwapBuffers, clearErrors);
+	presenter->PresentFrame(*this, allowSwapBuffers, clearErrors);
 }
 
 void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)

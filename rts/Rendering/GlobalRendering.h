@@ -19,7 +19,6 @@ class IShaderPipeline;
 struct SDL_version;
 struct SDL_Rect;
 struct SDL_Window;
-typedef void* SDL_GLContext;
 
 /**
  * @brief Globally accessible unsynced, rendering related data
@@ -46,9 +45,9 @@ public:
 	 */
 	bool CreateWindowAndContext(const char* title);
 	SDL_Window* CreateSDLWindow(const char* title) const;
-	SDL_GLContext CreateGLContext(const int2& minCtx);
+	NativeRenderContextHandle CreateNativeContext(const int2& minCtx);
 	SDL_Window* GetWindow() { return renderBackend->GetRenderContext().GetNativeWindow(*this); }
-	SDL_GLContext GetContext() { return renderBackend->GetRenderContext().GetNativeContext(*this); }
+	NativeRenderContextHandle GetContext() { return renderBackend->GetRenderContext().GetNativeContext(*this); }
 
 	void DestroyWindowAndContext();
 	void KillSDL() const;
@@ -390,7 +389,7 @@ public:
 	#endif
 public:
 	SDL_Window* sdlWindow;
-	SDL_GLContext glContext;
+	NativeRenderContextHandle glContext;
 	std::unique_ptr<IRenderBackend> renderBackend;
 public:
 	/**

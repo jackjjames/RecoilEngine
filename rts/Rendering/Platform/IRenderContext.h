@@ -5,7 +5,7 @@
 #include "System/type2.h"
 
 struct SDL_Window;
-typedef void* SDL_GLContext;
+using NativeRenderContextHandle = void*;
 
 class CGlobalRendering;
 
@@ -15,11 +15,12 @@ public:
 	virtual ~IRenderContext() = default;
 
 	virtual SDL_Window* CreateWindow(const CGlobalRendering& rendering, const char* title) const = 0;
-	virtual SDL_GLContext CreateContext(const CGlobalRendering& rendering, SDL_Window* window, const int2& minCtx) const = 0;
+	virtual NativeRenderContextHandle CreateContext(const CGlobalRendering& rendering, SDL_Window* window, const int2& minCtx) const = 0;
+	virtual void InitializeNativeContext(CGlobalRendering& rendering) const = 0;
 	virtual void DestroyWindowAndContext(CGlobalRendering& rendering) const = 0;
 	virtual void KillSDL() const = 0;
-	virtual void MakeCurrent(SDL_Window* window, SDL_GLContext context, bool clear) const = 0;
+	virtual void MakeCurrent(SDL_Window* window, NativeRenderContextHandle context, bool clear) const = 0;
 	virtual void SwapWindow(SDL_Window* window) const = 0;
 	virtual SDL_Window* GetNativeWindow(const CGlobalRendering& rendering) const = 0;
-	virtual SDL_GLContext GetNativeContext(const CGlobalRendering& rendering) const = 0;
+	virtual NativeRenderContextHandle GetNativeContext(const CGlobalRendering& rendering) const = 0;
 };

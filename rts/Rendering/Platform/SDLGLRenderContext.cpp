@@ -80,7 +80,7 @@ public:
 		return newWindow;
 	}
 
-	SDL_GLContext CreateContext(const CGlobalRendering& rendering, SDL_Window* window, const int2& minCtx) const override
+	NativeRenderContextHandle CreateContext(const CGlobalRendering& rendering, SDL_Window* window, const int2& minCtx) const override
 	{
 		SDL_GLContext newContext = nullptr;
 
@@ -133,6 +133,13 @@ public:
 		return (newContext = SDL_GL_CreateContext(window));
 	}
 
+	void InitializeNativeContext(CGlobalRendering& rendering) const override
+	{
+		(void)rendering;
+		gladLoadGL();
+		GLX::Load(rendering.sdlWindow);
+	}
+
 	void DestroyWindowAndContext(CGlobalRendering& rendering) const override
 	{
 		if (!rendering.sdlWindow)
@@ -146,7 +153,7 @@ public:
 
 #if !defined(HEADLESS)
 		if (rendering.glContext)
-			SDL_GL_DeleteContext(rendering.glContext);
+			SDL_GL_DeleteContext(static_cast<SDL_GLContext>(rendering.glContext));
 #endif
 
 		rendering.sdlWindow = nullptr;
@@ -165,9 +172,9 @@ public:
 		SDL_Quit();
 	}
 
-	void MakeCurrent(SDL_Window* window, SDL_GLContext context, bool clear) const override
+	void MakeCurrent(SDL_Window* window, NativeRenderContextHandle context, bool clear) const override
 	{
-		SDL_GL_MakeCurrent(window, clear ? nullptr : context);
+		SDL_GL_MakeCurrent(window, clear ? nullptr : static_cast<SDL_GLContext>(context));
 	}
 
 	void SwapWindow(SDL_Window* window) const override
@@ -180,7 +187,7 @@ public:
 		return rendering.sdlWindow;
 	}
 
-	SDL_GLContext GetNativeContext(const CGlobalRendering& rendering) const override
+	NativeRenderContextHandle GetNativeContext(const CGlobalRendering& rendering) const override
 	{
 		return rendering.glContext;
 	}
@@ -198,7 +205,7 @@ SDL_Window* CGlobalRendering::CreateSDLWindow(const char* title) const
 	return renderBackend->GetRenderContext().CreateWindow(*this, title);
 }
 
-SDL_GLContext CGlobalRendering::CreateGLContext(const int2& minCtx)
+NativeRenderContextHandle CGlobalRendering::CreateNativeContext(const int2& minCtx)
 {
 	return renderBackend->GetRenderContext().CreateContext(*this, sdlWindow, minCtx);
 }
@@ -215,6 +222,7 @@ bool CGlobalRendering::CreateWindowAndContext(const char* title)
 		return false;
 	}
 
+#if defined(RENDER_BACKEND_GL)
 	const char* mesaGL = getenv("MESA_GL_VERSION_OVERRIDE");
 	const char* softGL = getenv("LIBGL_ALWAYS_SOFTWARE");
 
@@ -243,6 +251,9 @@ bool CGlobalRendering::CreateWindowAndContext(const char* title)
 		if (msaaLevel % 2 == 1)
 			++msaaLevel;
 	}
+#else
+	const int2 minCtx = {0, 0};
+#endif
 
 	if ((sdlWindow = CreateSDLWindow(title)) == nullptr)
 		return false;
@@ -257,12 +268,12 @@ bool CGlobalRendering::CreateWindowAndContext(const char* title)
 		WindowManagerHelper::BlockCompositing(sdlWindow);
 #endif
 
-	if ((glContext = CreateGLContext(minCtx)) == nullptr)
+	if ((glContext = CreateNativeContext(minCtx)) == nullptr)
 		return false;
 
-	gladLoadGL();
-	GLX::Load(sdlWindow);
+	renderBackend->GetRenderContext().InitializeNativeContext(*this);
 
+#if defined(RENDER_BACKEND_GL)
 	if (!CheckGLContextVersion(minCtx)) {
 		int ctxProfile = 0;
 		SDL_GL_GetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, &ctxProfile);
@@ -275,6 +286,7 @@ bool CGlobalRendering::CreateWindowAndContext(const char* title)
 		handleerror(nullptr, errStr.c_str(), "ERROR", MBF_OK | MBF_EXCL);
 		return false;
 	}
+#endif
 
 	MakeCurrentContext(false);
 	SDL_DisableScreenSaver();

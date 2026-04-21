@@ -13,8 +13,10 @@ add_dependencies(Game generateVersionFiles)
 target_include_directories(Game PRIVATE "${CMAKE_BINARY_DIR}/src-generated/engine")
 if (SPRING_RENDER_BACKEND STREQUAL "gl")
 	target_compile_definitions(Game PRIVATE RENDER_BACKEND_GL)
+elseif (APPLE AND SPRING_RENDER_BACKEND STREQUAL "metal")
+	target_compile_definitions(Game PRIVATE RENDER_BACKEND_METAL)
 else()
-	message(FATAL_ERROR "engine-legacy only supports SPRING_RENDER_BACKEND=gl")
+	message(FATAL_ERROR "engine-legacy only supports SPRING_RENDER_BACKEND=gl or metal on APPLE")
 endif()
 target_link_libraries(Game PRIVATE
 	 Tracy::TracyClient
@@ -63,6 +65,12 @@ endif (UNIX)
 if (APPLE)
 	find_library(COREFOUNDATION_LIBRARY Foundation)
 	list(APPEND engineLibraries ${COREFOUNDATION_LIBRARY})
+
+	if (SPRING_RENDER_BACKEND STREQUAL "metal")
+		find_library(METAL_LIBRARY Metal REQUIRED)
+		find_library(QUARTZCORE_LIBRARY QuartzCore REQUIRED)
+		list(APPEND engineLibraries ${METAL_LIBRARY} ${QUARTZCORE_LIBRARY})
+	endif()
 endif (APPLE)
 
 list(APPEND engineLibraries squish rgetc1)
@@ -87,7 +95,11 @@ include_directories(${engineIncludes})
 
 ### Build the executable
 add_executable(engine-legacy ${EXE_FLAGS} ${engineSources} ${ENGINE_ICON} ${engineHeaders})
-target_compile_definitions(engine-legacy PRIVATE RENDER_BACKEND_GL)
+if (SPRING_RENDER_BACKEND STREQUAL "gl")
+	target_compile_definitions(engine-legacy PRIVATE RENDER_BACKEND_GL)
+elseif (APPLE AND SPRING_RENDER_BACKEND STREQUAL "metal")
+	target_compile_definitions(engine-legacy PRIVATE RENDER_BACKEND_METAL)
+endif()
 target_link_libraries(engine-legacy ${engineLibraries} Game)
 
 # Export symbols for plugin access (replaces CMP0065 OLD behavior)

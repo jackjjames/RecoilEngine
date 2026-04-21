@@ -21,10 +21,15 @@ find_package(Threads REQUIRED)
 
 option(INSTALL_PORTABLE "Make a portable installation (instead of regular system installation)" TRUE)
 set(SPRING_RENDER_BACKEND "gl" CACHE STRING "Renderer backend implementation")
-set_property(CACHE SPRING_RENDER_BACKEND PROPERTY STRINGS gl)
+set(_spring_render_backends gl)
+if (APPLE)
+	list(APPEND _spring_render_backends metal)
+endif()
+set_property(CACHE SPRING_RENDER_BACKEND PROPERTY STRINGS ${_spring_render_backends})
 
-if (NOT SPRING_RENDER_BACKEND STREQUAL "gl")
-	message(FATAL_ERROR "Unsupported SPRING_RENDER_BACKEND='${SPRING_RENDER_BACKEND}'. Supported values: gl")
+if (NOT SPRING_RENDER_BACKEND IN_LIST _spring_render_backends)
+	string(REPLACE ";" ", " _spring_render_backends_str "${_spring_render_backends}")
+	message(FATAL_ERROR "Unsupported SPRING_RENDER_BACKEND='${SPRING_RENDER_BACKEND}'. Supported values: ${_spring_render_backends_str}")
 endif()
 
 # Allow to set PREFER_STATIC_LIBS from env, defaults to false

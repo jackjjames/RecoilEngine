@@ -153,5 +153,15 @@ set(sources_engine_Rendering
 		"${CMAKE_CURRENT_SOURCE_DIR}/Fonts/glFont.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Fonts/glFontRenderer.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Fonts/TextWrap.cpp"
-		PARENT_SCOPE
 	)
+
+if (APPLE AND SPRING_RENDER_BACKEND STREQUAL "metal")
+	list(APPEND sources_engine_Rendering
+		"${CMAKE_CURRENT_SOURCE_DIR}/MetalRenderBackend.mm"
+		"${CMAKE_CURRENT_SOURCE_DIR}/MetalRenderTarget.mm"
+		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/MetalPresenter.mm"
+		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/MetalRenderContext.mm"
+	)
+endif()
+
+set(sources_engine_Rendering ${sources_engine_Rendering} PARENT_SCOPE)

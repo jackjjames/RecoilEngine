@@ -121,6 +121,7 @@ set(sources_engine_Rendering
 		"${CMAKE_CURRENT_SOURCE_DIR}/Textures/IAtlasAllocator.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Textures/Bitmap.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Textures/ColorMap.cpp"
+		"${CMAKE_CURRENT_SOURCE_DIR}/Textures/GL/GLTexture.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Textures/LegacyAtlasAlloc.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Textures/NamedTextures.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Textures/S3OTextureHandler.cpp"

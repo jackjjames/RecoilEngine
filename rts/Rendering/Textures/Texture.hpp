@@ -19,6 +19,9 @@ namespace GL {
 
 		bool IsValid() const { return texID != 0; }
 		auto GetId() const { return texID; }
+		auto GetTarget() const { return texTarget; }
+		auto GetInternalFormat() const { return intFormat; }
+		auto GetNumLevels() const { return numLevels; }
 		auto DisOwn() { ownTexID = false; return texID; }
 
 		[[nodiscard]] GL::TexBind ScopedBind();

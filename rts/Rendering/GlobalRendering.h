@@ -7,6 +7,7 @@
 #include <memory>
 #include <array>
 
+#include "Rendering/Platform/IRenderContext.h"
 #include "System/Matrix44f.h"
 #include "System/creg/creg_cond.h"
 #include "System/Misc/SpringTime.h"
@@ -45,8 +46,8 @@ public:
 	bool CreateWindowAndContext(const char* title);
 	SDL_Window* CreateSDLWindow(const char* title) const;
 	SDL_GLContext CreateGLContext(const int2& minCtx);
-	SDL_Window* GetWindow() { return sdlWindow; }
-	SDL_GLContext GetContext() { return glContext; }
+	SDL_Window* GetWindow() { return renderContext->GetNativeWindow(*this); }
+	SDL_GLContext GetContext() { return renderContext->GetNativeContext(*this); }
 
 	void DestroyWindowAndContext();
 	void KillSDL() const;
@@ -388,6 +389,7 @@ public:
 public:
 	SDL_Window* sdlWindow;
 	SDL_GLContext glContext;
+	std::unique_ptr<IRenderContext> renderContext;
 public:
 	/**
 	* @brief maximum texture unit number

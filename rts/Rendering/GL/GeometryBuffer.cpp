@@ -56,11 +56,16 @@ void GL::GeometryBuffer::CreateAttachments(const int2 size)
 
 void GL::GeometryBuffer::AttachAttachments(GLuint texTarget)
 {
-	buffer.Bind();
-	buffer.AttachTextures(bufferTextureIDs, bufferAttachments, texTarget, ATTACHMENT_COUNT);
+	buffer->Bind();
+
+	for (unsigned int n = 0; n < (ATTACHMENT_COUNT - 1); ++n) {
+		buffer->AttachColor(n, bufferTextureIDs[n], texTarget);
+	}
+
+	buffer->AttachDepth(bufferTextureIDs[ATTACHMENT_ZVALTEX], texTarget);
 
 	glBindTexture(GetTextureTarget(), 0);
-	glDrawBuffers(ATTACHMENT_COUNT - 1, &bufferAttachments[0]);
+	buffer->SetDrawBuffers(ATTACHMENT_COUNT - 1, &bufferAttachments[0]);
 }
 
 void GL::GeometryBuffer::Init(bool ctor) {
@@ -91,7 +96,7 @@ void GL::GeometryBuffer::Kill(bool dtor) {
 		return;
 	}
 
-	if (buffer.IsValid())
+	if (buffer->IsValid())
 		DetachTextures(false);
 
 	dead = true;
@@ -125,15 +130,15 @@ void GL::GeometryBuffer::DetachTextures(const bool init) {
 	if (init)
 		return;
 
-	buffer.Bind();
+	buffer->Bind();
 
 	// detach only actually attached textures, ATI drivers might crash
 	for (unsigned int i = 0; i < (ATTACHMENT_COUNT - 1); ++i) {
-		buffer.Detach(GL_COLOR_ATTACHMENT0_EXT + i);
+		buffer->Detach(GL_COLOR_ATTACHMENT0_EXT + i);
 	}
 
-	buffer.Detach(GL_DEPTH_ATTACHMENT_EXT);
-	buffer.Unbind();
+	buffer->Detach(GL_DEPTH_ATTACHMENT_EXT);
+	buffer->Unbind();
 
 	DeleteAttachments();
 }
@@ -168,6 +173,7 @@ bool GL::GeometryBuffer::Create(const int2 size) {
 	const unsigned int texTarget = GetTextureTarget();
 
 	CreateAttachments(size);
+	buffer->SetSize(size);
 
 	// sic; Mesa complains about an incomplete FBO if calling Bind before TexImage (?)
 	AttachAttachments(texTarget);
@@ -175,11 +181,11 @@ bool GL::GeometryBuffer::Create(const int2 size) {
 	// FBO must have been valid from point of construction
 	// if we reached CreateGeometryBuffer, but CheckStatus
 	// can still invalidate it
-	assert(buffer.IsValid());
+	assert(buffer->IsValid());
 
-	const bool ret = buffer.CheckStatus(name);
+	const bool ret = buffer->IsComplete(name);
 
-	buffer.Unbind();
+	buffer->Unbind();
 	return ret;
 }
 
@@ -188,7 +194,7 @@ bool GL::GeometryBuffer::Update(const bool init) {
 	currBufferSize = GetWantedSize(true);
 
 	// FBO must be valid from point of construction
-	if (!buffer.IsValid())
+	if (!buffer->IsValid())
 		return false;
 
 	// buffer isn't bound by calling context, can not call

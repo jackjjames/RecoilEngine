@@ -3,7 +3,10 @@
 #ifndef NAMED_TEXTURES_H
 #define NAMED_TEXTURES_H
 
+#include <memory>
 #include <string>
+
+class ITexture;
 
 namespace CNamedTextures {
 	void Init();
@@ -32,6 +35,7 @@ namespace CNamedTextures {
 		unsigned int texType;
 		bool alpha;
 		bool persist;
+		std::unique_ptr<ITexture> handle;
 	};
 
 	size_t GetInfoIndex(const std::string& texName);

@@ -123,36 +123,20 @@ void C3DOTextureHandler::Init()
 
 	numLevels = atlasAlloc->GetNumTexLevels();
 
-	{
-		glGenTextures(1, &atlas3do1);
-		glBindTexture(GL_TEXTURE_2D, atlas3do1);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, (numLevels > 1) ? GL_LINEAR_MIPMAP_NEAREST : GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,     GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,     GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  numLevels - 1);
+	CBitmap atlasBitmap1(bigtex1.data(), curAtlasSize.x, curAtlasSize.y);
+	CBitmap atlasBitmap2(bigtex2.data(), curAtlasSize.x, curAtlasSize.y);
 
-		if (numLevels > 1) {
-			RecoilBuildMipmaps(GL_TEXTURE_2D, GL_RGBA8, curAtlasSize.x, curAtlasSize.y, GL_RGBA, GL_UNSIGNED_BYTE, bigtex1.data()); //FIXME disable texcompression
-		} else {
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, curAtlasSize.x, curAtlasSize.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, bigtex1.data());
-		}
-	}
-	{
-		glGenTextures(1, &atlas3do2);
-		glBindTexture(GL_TEXTURE_2D, atlas3do2);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, (numLevels > 1) ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,     GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,     GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  numLevels - 1);
+	GL::TextureCreationParams tcp1;
+	tcp1.reqNumLevels = numLevels;
+	tcp1.linearTextureFilter = true;
+	tcp1.linearMipMapFilter = false;
+	tcp1.wrapMirror = false;
 
-		if (numLevels > 0) {
-			RecoilBuildMipmaps(GL_TEXTURE_2D, GL_RGBA8, curAtlasSize.x, curAtlasSize.y, GL_RGBA, GL_UNSIGNED_BYTE, bigtex2.data()); //FIXME disable texcompression
-		} else {
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, curAtlasSize.x, curAtlasSize.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, bigtex2.data());
-		}
-	}
+	GL::TextureCreationParams tcp2 = tcp1;
+	tcp2.linearTextureFilter = false;
+
+	atlas3do1Handle = atlasBitmap1.CreateTextureHandle(tcp1);
+	atlas3do2Handle = atlasBitmap2.CreateTextureHandle(tcp2);
 
 	if (CTextureAtlas::GetDebug()) {
 		CBitmap tex1(bigtex1.data(), curAtlasSize.x, curAtlasSize.y);
@@ -166,11 +150,8 @@ void C3DOTextureHandler::Init()
 void C3DOTextureHandler::Kill()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
-	glDeleteTextures(1, &atlas3do1);
-	glDeleteTextures(1, &atlas3do2);
-
-	atlas3do1 = 0;
-	atlas3do2 = 0;
+	atlas3do1Handle.reset();
+	atlas3do2Handle.reset();
 
 	textures.clear();
 }
@@ -178,14 +159,14 @@ void C3DOTextureHandler::Kill()
 void C3DOTextureHandler::DumpAtlasTextures(const std::string& fileExt) const
 {
 	RECOIL_DETAILED_TRACY_ZONE;
-	if (atlas3do1) {
+	if (atlas3do1Handle) {
 		for (int level = 0; level < numLevels; ++level) {
-			glSaveTexture(atlas3do1, fmt::format("3DOAtlas1-{}.{}", level, fileExt).c_str(), level);
+			glSaveTexture(atlas3do1Handle->GetNativeId(), fmt::format("3DOAtlas1-{}.{}", level, fileExt).c_str(), level);
 		}
 	}
-	if (atlas3do2) {
+	if (atlas3do2Handle) {
 		for (int level = 0; level < numLevels; ++level) {
-			glSaveTexture(atlas3do2, fmt::format("3DOAtlas2-{}.{}", level, fileExt).c_str(), level);
+			glSaveTexture(atlas3do2Handle->GetNativeId(), fmt::format("3DOAtlas2-{}.{}", level, fileExt).c_str(), level);
 		}
 	}
 }

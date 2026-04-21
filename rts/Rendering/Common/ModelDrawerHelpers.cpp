@@ -252,9 +252,9 @@ void CModelDrawerHelperS3O::BindOpaqueTex(const CS3OTextureHandler::S3OTexMat* t
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 	glActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D, textureMat->tex2);
+	glBindTexture(GL_TEXTURE_2D, textureMat->tex2->GetNativeId());
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, textureMat->tex1);
+	glBindTexture(GL_TEXTURE_2D, textureMat->tex1->GetNativeId());
 }
 
 void CModelDrawerHelperS3O::UnbindOpaqueTex() const
@@ -271,7 +271,7 @@ void CModelDrawerHelperS3O::BindShadowTex(const CS3OTextureHandler::S3OTexMat* t
 	RECOIL_DETAILED_TRACY_ZONE;
 	glActiveTexture(GL_TEXTURE0);
 	glEnable(GL_TEXTURE_2D);
-	glBindTexture(GL_TEXTURE_2D, textureMat->tex2);
+	glBindTexture(GL_TEXTURE_2D, textureMat->tex2->GetNativeId());
 }
 
 void CModelDrawerHelperS3O::UnbindShadowTex() const
@@ -288,9 +288,9 @@ void CModelDrawerHelperASS::BindOpaqueTex(const CS3OTextureHandler::S3OTexMat* t
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 	glActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D, textureMat->tex2);
+	glBindTexture(GL_TEXTURE_2D, textureMat->tex2->GetNativeId());
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, textureMat->tex1);
+	glBindTexture(GL_TEXTURE_2D, textureMat->tex1->GetNativeId());
 }
 
 void CModelDrawerHelperASS::UnbindOpaqueTex() const
@@ -307,7 +307,7 @@ void CModelDrawerHelperASS::BindShadowTex(const CS3OTextureHandler::S3OTexMat* t
 	RECOIL_DETAILED_TRACY_ZONE;
 	glActiveTexture(GL_TEXTURE0);
 	glEnable(GL_TEXTURE_2D);
-	glBindTexture(GL_TEXTURE_2D, textureMat->tex2);
+	glBindTexture(GL_TEXTURE_2D, textureMat->tex2->GetNativeId());
 }
 
 void CModelDrawerHelperASS::UnbindShadowTex() const

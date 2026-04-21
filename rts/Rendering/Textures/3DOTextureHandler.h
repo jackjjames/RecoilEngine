@@ -3,11 +3,13 @@
 #ifndef _3DO_TEXTURE_HANDLER_H
 #define _3DO_TEXTURE_HANDLER_H
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "Rendering/GL/myGL.h"
 #include "Rendering/Textures/AtlasedTexture.hpp"
+#include "Rendering/Textures/ITexture.h"
 #include "Rendering/Textures/TAPalette.h"
 #include "System/float4.h"
 #include "System/UnorderedMap.hpp"
@@ -25,8 +27,8 @@ public:
 	// NOTE: safe with unordered_map after all textures have been loaded
 	UnitTexture* Get3DOTexture(const std::string& name);
 
-	unsigned int GetAtlasTex1ID() const { return atlas3do1; }
-	unsigned int GetAtlasTex2ID() const { return atlas3do2; }
+	unsigned int GetAtlasTex1ID() const { return atlas3do1Handle ? atlas3do1Handle->GetNativeId() : 0; }
+	unsigned int GetAtlasTex2ID() const { return atlas3do2Handle ? atlas3do2Handle->GetNativeId() : 0; }
 	unsigned int GetAtlasTexSizeX() const { return bigTexX; }
 	unsigned int GetAtlasTexSizeY() const { return bigTexY; }
 
@@ -44,8 +46,8 @@ private:
 
 	CTAPalette palette;
 
-	GLuint atlas3do1 = 0;
-	GLuint atlas3do2 = 0;
+	std::unique_ptr<ITexture> atlas3do1Handle;
+	std::unique_ptr<ITexture> atlas3do2Handle;
 	int bigTexX = 0;
 	int bigTexY = 0;
 	int numLevels = 0;

@@ -3,10 +3,12 @@
 #ifndef S3O_TEXTURE_HANDLER_H
 #define S3O_TEXTURE_HANDLER_H
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "Bitmap.h"
+#include "Rendering/Textures/ITexture.h"
 #include "System/Threading/SpringThreading.h"
 #include "System/UnorderedMap.hpp"
 
@@ -19,8 +21,8 @@ public:
 	struct S3OTexMat {
 		int num;
 
-		unsigned int tex1;
-		unsigned int tex2;
+		ITexture* tex1 = nullptr;
+		ITexture* tex2 = nullptr;
 
 		unsigned int tex1SizeX;
 		unsigned int tex1SizeY;
@@ -30,7 +32,7 @@ public:
 	};
 
 	struct CachedS3OTex {
-		unsigned int texID;
+		std::unique_ptr<ITexture> texture;
 		unsigned int xsize;
 		unsigned int ysize;
 		bool invertAxis;

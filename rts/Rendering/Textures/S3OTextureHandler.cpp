@@ -56,11 +56,6 @@ void CS3OTextureHandler::Init()
 void CS3OTextureHandler::Kill()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
-	for (S3OTexMat& texture: textures) {
-		glDeleteTextures(1, &(texture.tex1));
-		glDeleteTextures(1, &(texture.tex2));
-	}
-
 	textures.clear();
 	textureCache.clear();
 	textureTable.clear();
@@ -73,7 +68,7 @@ void CS3OTextureHandler::Reload()
 	auto lock = CModelsLock::GetScopedLock(); //needed?
 
 	for (auto& [texName, texData] : textureCache) {
-		if (texData.texID == 0)
+		if (texData.texture == nullptr)
 			continue;
 
 		CBitmap bitmap;
@@ -86,8 +81,10 @@ void CS3OTextureHandler::Reload()
 			if (texData.invertAxis)
 				bitmap.ReverseYAxis();
 
-			uint32_t newTexId = bitmap.CreateMipMapTexture(0.0f, 0.0f, 0, texData.texID);
-			assert(newTexId == texData.texID);
+			auto texture = bitmap.CreateMipMapTextureHandle(0.0f, 0.0f, 0, texData.texture->GetNativeId());
+			assert(texture && texture->GetNativeId() == texData.texture->GetNativeId());
+			texData.texture->DisOwn();
+			texData.texture = std::move(texture);
 		}
 	}
 }
@@ -135,8 +132,8 @@ unsigned int CS3OTextureHandler::LoadAndCacheTexture(
 	const auto& textureName = model->texs[texNum];
 	const auto textureIt = textureCache.find(textureName);
 
-	if (textureIt != textureCache.end() && textureIt->second.texID > 0)
-		return textureIt->second.texID;
+	if (textureIt != textureCache.end() && textureIt->second.texture != nullptr)
+		return textureIt->second.texture->GetNativeId();
 
 	const auto bitmapIt = bitmapCache.find(textureName);
 
@@ -172,14 +169,17 @@ unsigned int CS3OTextureHandler::LoadAndCacheTexture(
 			bitmap->InvertAlpha();
 	}
 
-	const unsigned int texID = preloadCall ? 0 : bitmap->CreateMipMapTexture();
+	std::unique_ptr<ITexture> texture;
+	if (!preloadCall)
+		texture = bitmap->CreateMipMapTextureHandle();
+	const unsigned int texID = (texture != nullptr) ? texture->GetNativeId() : 0;
 #ifndef HEADLESS
 	assert(preloadCall || texID > 0);
 #endif
 
 	if (textureIt != textureCache.end() && texID > 0) {
 		assert(!preloadCall);
-		textureIt->second.texID = texID;
+		textureIt->second.texture = std::move(texture);
 	}
 	else {
 		//save main params from the preloadCall pass, such that data is stored correctly for Reload()
@@ -187,7 +187,7 @@ unsigned int CS3OTextureHandler::LoadAndCacheTexture(
 		assert( preloadCall);
 #endif
 		textureCache[textureName] = {
-			texID,
+			std::move(texture),
 			static_cast<uint32_t>(bitmap->xsize),
 			static_cast<uint32_t>(bitmap->ysize),
 			invertAxis,
@@ -214,14 +214,14 @@ unsigned int CS3OTextureHandler::InsertTextureMat(const S3DModel* model)
 	S3OTexMat& texMat = textures.back();
 
 	texMat.num       = textures.size() - 1;
-	texMat.tex1      = tex1.texID;
-	texMat.tex2      = tex2.texID;
+	texMat.tex1      = tex1.texture.get();
+	texMat.tex2      = tex2.texture.get();
 	texMat.tex1SizeX = tex1.xsize;
 	texMat.tex1SizeY = tex1.ysize;
 	texMat.tex2SizeX = tex2.xsize;
 	texMat.tex2SizeY = tex2.ysize;
 
-	textureTable[TEX_MAT_UID(texMat.tex1, texMat.tex2)] = texMat.num;
+	textureTable[TEX_MAT_UID(texMat.tex1->GetNativeId(), texMat.tex2->GetNativeId())] = texMat.num;
 
 	return texMat.num;
 }

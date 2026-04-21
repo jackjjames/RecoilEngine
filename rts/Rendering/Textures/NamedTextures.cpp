@@ -8,6 +8,7 @@
 #include "Rendering/GL/myGL.h"
 #include "Bitmap.h"
 #include "Rendering/GlobalRendering.h"
+#include "Rendering/Textures/ITexture.h"
 #include "System/type2.h"
 #include "System/Log/ILog.h"
 #include "System/Threading/SpringThreading.h"
@@ -51,10 +52,8 @@ namespace CNamedTextures {
 		const std::lock_guard<spring::recursive_mutex> lck(mutex);
 
 		for (const auto& [texName, texIdx]: texInfoMap) {
-			const GLuint texID = texInfoVec[texIdx].id;
-
 			if (shutdown || !texInfoVec[texIdx].persist) {
-				glDeleteTextures(1, &texID);
+				DeleteTexture(texInfoVec[texIdx]);
 				// always recycle non-persistent textures
 				freeIndices.push_back(texIdx);
 			} else {
@@ -83,7 +82,20 @@ namespace CNamedTextures {
 
 	/******************************************************************************/
 
-	static void InsertTex(const std::string& texName, const TexInfo& texInfo, bool loadTex)
+	static void DeleteTexture(TexInfo& texInfo)
+	{
+	RECOIL_DETAILED_TRACY_ZONE;
+		if (texInfo.handle) {
+			texInfo.handle.reset();
+		} else if (texInfo.id != 0) {
+			const GLuint texID = texInfo.id;
+			glDeleteTextures(1, &texID);
+		}
+
+		texInfo.id = 0;
+	}
+
+	static void InsertTex(const std::string& texName, TexInfo texInfo, bool loadTex)
 	{
 	RECOIL_DETAILED_TRACY_ZONE;
 		// caller (GenInsertTex) already has lock
@@ -92,11 +104,11 @@ namespace CNamedTextures {
 
 		if (freeIndices.empty()) {
 			texInfoMap[texName] = texInfoVec.size();
-			texInfoVec.push_back(texInfo);
+			texInfoVec.push_back(std::move(texInfo));
 		} else {
 			// recycle
 			texInfoMap[texName] = freeIndices.back();
-			texInfoVec[freeIndices.back()] = texInfo;
+			texInfoVec[freeIndices.back()] = std::move(texInfo);
 			freeIndices.pop_back();
 		}
 	}
@@ -116,13 +128,13 @@ namespace CNamedTextures {
 		return texInfo;
 	}
 
-	static void GenInsertTex(const std::string& texName, const TexInfo& texInfo, bool genTex, bool bindTex, bool loadTex, bool persistTex)
+	static void GenInsertTex(const std::string& texName, TexInfo texInfo, bool genTex, bool bindTex, bool loadTex, bool persistTex)
 	{
 	RECOIL_DETAILED_TRACY_ZONE;
 		const std::lock_guard<spring::recursive_mutex> lck(mutex);
 
 		if (!genTex) {
-			InsertTex(texName, texInfo, loadTex);
+			InsertTex(texName, std::move(texInfo), loadTex);
 			return;
 		}
 
@@ -138,9 +150,7 @@ namespace CNamedTextures {
 
 		if (it != texInfoMap.end()) {
 			const size_t texIdx = it->second;
-			const GLuint texID = texInfoVec[texIdx].id;
-
-			glDeleteTextures(1, &texID);
+			DeleteTexture(texInfoVec[texIdx]);
 
 			freeIndices.push_back(texIdx);
 			texInfoMap.erase(it);
@@ -225,13 +235,21 @@ namespace CNamedTextures {
 			}
 		}
 
+		const auto existingIt = texInfoMap.find(texName);
+		ITexture* existingHandle = nullptr;
+
 		// get the image
 		CBitmap bitmap;
 		TexInfo texInfo;
+		if (existingIt != texInfoMap.end()) {
+			existingHandle = texInfoVec[existingIt->second].handle.get();
+			texInfo.persist = texInfoVec[existingIt->second].persist;
+		}
 
 		if (!bitmap.Load(filename, 1.0f, 4u, 0u)) {
 			LOG_L(L_WARNING, "Couldn't find texture \"%s\"!", filename.c_str());
-			GenInsertTex(texName, texInfo, false, false, true, false);
+			if (genInsert)
+				GenInsertTex(texName, std::move(texInfo), false, false, true, false);
 			return false;
 		}
 
@@ -246,7 +264,7 @@ namespace CNamedTextures {
 			tcp.aniso = globalRendering->maxTexAnisoLvl;
 
 		if (bitmap.compressed) {
-			texID = bitmap.CreateDDSTexture(tcp);
+			texInfo.handle = bitmap.CreateDDSTextureHandle(tcp);
 		} else {
 			if (resize) bitmap = bitmap.CreateRescaled(resizeDimensions.x,resizeDimensions.y);
 			if (invert) bitmap.InvertColors();
@@ -258,10 +276,11 @@ namespace CNamedTextures {
 				bitmap = bitmap.CreateRescaled(std::bit_ceil <uint32_t>(bitmap.xsize), std::bit_ceil <uint32_t>(bitmap.ysize));
 			}
 
-			texID = bitmap.CreateTexture(tcp);
+			texInfo.handle = bitmap.CreateTextureHandle(tcp);
 
 			// specify extra params
-			glBindTexture(GL_TEXTURE_2D, texID);
+			if (texInfo.handle)
+				texInfo.handle->Bind();
 
 			if (clamped) {
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -273,10 +292,14 @@ namespace CNamedTextures {
 				glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, white);
 			}
 
-			glBindTexture(GL_TEXTURE_2D, 0);
+			if (texInfo.handle)
+				texInfo.handle->Unbind();
 		}
 
-		texInfo.id    = texID;
+		if (texInfo.handle && existingHandle != nullptr && texID == existingHandle->GetNativeId())
+			existingHandle->DisOwn();
+
+		texInfo.id    = texInfo.handle ? texInfo.handle->GetNativeId() : texID;
 		texInfo.xsize = bitmap.xsize;
 		texInfo.ysize = bitmap.ysize;	
 
@@ -289,8 +312,11 @@ namespace CNamedTextures {
 			}	
 		#endif
 
-		if (genInsert)
-			GenInsertTex(texName, texInfo, false, false, true, false);
+		if (genInsert) {
+			GenInsertTex(texName, std::move(texInfo), false, false, true, false);
+		} else if (existingIt != texInfoMap.end()) {
+			texInfoVec[existingIt->second] = std::move(texInfo);
+		}
 
 		return true;
 	}

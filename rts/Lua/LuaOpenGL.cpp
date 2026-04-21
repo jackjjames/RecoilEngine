@@ -8,9 +8,10 @@
 //    requires the ARB_imaging extension)
 // - use materials instead of raw calls (again, handle dlists)
 //
-// Stage-1 renderer seam work intentionally leaves the Lua OpenGL surface on
-// direct GL entry points. Backend-neutral Lua rendering is deferred until the
-// engine-owned bootstrap, lifecycle, and render-target seams have settled.
+// Stage-2 renderer seam work still intentionally leaves the Lua OpenGL surface
+// on direct GL entry points. Stage 3 is where Lua GL, LuaVBO, LuaVAO, and
+// LuaShaders can move behind the IRenderBackend-owned interfaces introduced in
+// the engine bootstrap and presentation layers.
 
 #include "Rendering/GL/myGL.h"
 

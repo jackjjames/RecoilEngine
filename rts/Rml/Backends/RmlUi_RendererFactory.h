@@ -8,11 +8,21 @@
 
 namespace RmlGui
 {
+	class IRmlRendererBackend
+	{
+	public:
+		virtual ~IRmlRendererBackend() = default;
+
+		virtual bool IsValid() const = 0;
+		virtual Rml::RenderInterface* GetRenderInterface() = 0;
+		virtual void SetViewport(int width, int height) = 0;
+		virtual void BeginFrame() = 0;
+		virtual void EndFrame() = 0;
+	};
+
 	class RenderBackend
 	{
 	public:
-		struct Impl;
-
 		RenderBackend();
 		~RenderBackend();
 
@@ -24,6 +34,6 @@ namespace RmlGui
 		void EndFrame();
 
 	private:
-		std::unique_ptr<Impl> impl;
+		std::unique_ptr<IRmlRendererBackend> impl;
 	};
 } // namespace RmlGui

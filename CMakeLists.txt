@@ -20,6 +20,12 @@ endif()
 find_package(Threads REQUIRED)
 
 option(INSTALL_PORTABLE "Make a portable installation (instead of regular system installation)" TRUE)
+set(SPRING_RENDER_BACKEND "gl" CACHE STRING "Renderer backend implementation")
+set_property(CACHE SPRING_RENDER_BACKEND PROPERTY STRINGS gl)
+
+if (NOT SPRING_RENDER_BACKEND STREQUAL "gl")
+	message(FATAL_ERROR "Unsupported SPRING_RENDER_BACKEND='${SPRING_RENDER_BACKEND}'. Supported values: gl")
+endif()
 
 # Allow to set PREFER_STATIC_LIBS from env, defaults to false
 option(PREFER_STATIC_LIBS "Prefer static libraries when linking deps" $ENV{PREFER_STATIC_LIBS})

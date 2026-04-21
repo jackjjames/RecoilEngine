@@ -1,9 +1,9 @@
 #include "TextureCollection.h"
 
-// Stage-2 renderer seam work still does not turn the texture system into a
-// backend-neutral API. Texture lifetime and ownership stay GL-centric until
-// Stage 3 can thread them through the new IRenderBackend and IRenderTarget
-// surfaces without expanding this branch into a full texture rewrite.
+// Stage 3 moved texture lifetime through ITexture ownership seams, but this
+// collection still stores GL-facing IDs for the rest of the renderer. Stage 4
+// should finish lifting the remaining raw texture consumers onto backend-owned
+// descriptors instead of relying on GLuint-style identity.
 
 #include <algorithm>
 #include <iterator>

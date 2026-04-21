@@ -45,6 +45,21 @@
 
 #include "System/Misc/TracyDefs.h"
 
+std::unique_ptr<IRenderBackend> CreateMetalRenderBackend();
+
+namespace {
+
+std::unique_ptr<IRenderBackend> CreateRenderBackend()
+{
+#if defined(RENDER_BACKEND_METAL)
+	return CreateMetalRenderBackend();
+#else
+	return CreateGLRenderBackend();
+#endif
+}
+
+} // namespace
+
 CONFIG(bool, DebugGL).defaultValue(false).description("Enables GL debug-context and output. (see GL_ARB_debug_output)");
 CONFIG(bool, DebugGLStacktraces).defaultValue(false).description("Create a stacktrace when an OpenGL error occurs");
 CONFIG(bool, DebugGLReportGroups).defaultValue(false).description("Show OpenGL PUSH/POP groups in the GL debug");
@@ -346,7 +361,7 @@ CGlobalRendering::CGlobalRendering()
 	, forceDWMFlush(configHandler->GetInt("DWMFlush"))
 	, sdlWindow{nullptr}
 	, glContext{nullptr}
-	, renderBackend(CreateGLRenderBackend())
+	, renderBackend(CreateRenderBackend())
 	, glExtensions{}
 	, glTimerQueries{0}
 {
@@ -381,9 +396,11 @@ CGlobalRendering::~CGlobalRendering()
 	verticalSync->WrapRemoveObserver();
 
 	// protect against aborted startup
+	#if defined(RENDER_BACKEND_GL)
 	if (glContext) {
 		glDeleteQueries(glTimerQueries.size(), glTimerQueries.data());
 	}
+	#endif
 
 	DestroyWindowAndContext();
 	KillSDL();
@@ -391,6 +408,10 @@ CGlobalRendering::~CGlobalRendering()
 
 void CGlobalRendering::PreKill()
 {
+	#if defined(RENDER_BACKEND_METAL)
+	return;
+	#endif
+
 	UniformConstants::GetInstance().Kill(); //unsafe to kill in ~CGlobalRendering()
 	RenderBuffer::KillStatic();
 	GL::shapes.Kill();
@@ -403,6 +424,11 @@ void CGlobalRendering::MakeCurrentContext(bool clear) const {
 }
 
 void CGlobalRendering::PostInit() {
+#if defined(RENDER_BACKEND_METAL)
+	UpdateTimer();
+	return;
+#endif
+
 	// glewInit sets GL_INVALID_ENUM, get rid of it
 	glGetError();
 
@@ -456,6 +482,18 @@ void CGlobalRendering::PresentFrame(bool allowSwapBuffers, bool clearErrors)
 
 void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
 {
+#if defined(RENDER_BACKEND_METAL)
+	(void)clearErrors;
+
+	if (!allowSwapBuffers && !forceSwapBuffers)
+		return;
+
+	assert(sdlWindow);
+	renderBackend->GetRenderContext().SwapWindow(sdlWindow);
+	globalRendering->lastSwapBuffersEnd = spring_now();
+	return;
+#endif
+
 	spring_time pre;
 	{
 		SCOPED_TIMER("Misc::SwapBuffers");
@@ -504,6 +542,11 @@ void CGlobalRendering::SwapBuffers(bool allowSwapBuffers, bool clearErrors)
 
 void CGlobalRendering::SetGLTimeStamp(uint32_t queryIdx) const
 {
+#if defined(RENDER_BACKEND_METAL)
+	(void)queryIdx;
+	return;
+#endif
+
 	if (!GLAD_GL_ARB_timer_query)
 		return;
 
@@ -512,6 +555,12 @@ void CGlobalRendering::SetGLTimeStamp(uint32_t queryIdx) const
 
 uint64_t CGlobalRendering::CalcGLDeltaTime(uint32_t queryIdx0, uint32_t queryIdx1) const
 {
+#if defined(RENDER_BACKEND_METAL)
+	(void)queryIdx0;
+	(void)queryIdx1;
+	return 0;
+#endif
+
 	if (!GLAD_GL_ARB_timer_query)
 		return 0;
 

@@ -1,9 +1,9 @@
 /* This file is part of the Spring engine (GPL v2 or later), see LICENSE.html */
 
-// Stage-2 renderer seam work still keeps this legacy world draw path GL-owned
-// on purpose. Stage 3 can start moving world drawing over once the
-// IRenderBackend, IPresenter, and render-target seams are stable enough to own
-// backend-neutral draw policy.
+// Stage 3 stopped short of rewriting the legacy world draw path itself. The
+// backend bootstrap, presentation, render-target, and texture seams now exist;
+// Stage 4 is where WorldDrawer should split pass orchestration from backend
+// execution and stop expressing frame policy as raw GL calls.
 
 #include "Rendering/GL/myGL.h"
 

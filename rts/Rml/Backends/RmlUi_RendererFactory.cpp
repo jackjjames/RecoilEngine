@@ -10,19 +10,8 @@
 
 namespace RmlGui
 {
-	struct RenderBackend::Impl
-	{
-		virtual ~Impl() = default;
-
-		virtual bool IsValid() const = 0;
-		virtual Rml::RenderInterface* GetRenderInterface() = 0;
-		virtual void SetViewport(int width, int height) = 0;
-		virtual void BeginFrame() = 0;
-		virtual void EndFrame() = 0;
-	};
-
 #ifndef HEADLESS
-	struct GL3RenderBackend final : RenderBackend::Impl
+	struct GL3RmlRendererBackend final : IRmlRendererBackend
 	{
 		bool IsValid() const override { return static_cast<bool>(renderInterface); }
 		Rml::RenderInterface* GetRenderInterface() override { return &renderInterface; }
@@ -33,7 +22,7 @@ namespace RmlGui
 		RenderInterface_GL3_Recoil renderInterface;
 	};
 #else
-	struct HeadlessRenderBackend final : RenderBackend::Impl
+	struct HeadlessRmlRendererBackend final : IRmlRendererBackend
 	{
 		bool IsValid() const override { return static_cast<bool>(renderInterface); }
 		Rml::RenderInterface* GetRenderInterface() override { return &renderInterface; }
@@ -47,9 +36,9 @@ namespace RmlGui
 
 	RenderBackend::RenderBackend()
 #ifndef HEADLESS
-		: impl(std::make_unique<GL3RenderBackend>())
+		: impl(std::make_unique<GL3RmlRendererBackend>())
 #else
-		: impl(std::make_unique<HeadlessRenderBackend>())
+		: impl(std::make_unique<HeadlessRmlRendererBackend>())
 #endif
 	{
 	}

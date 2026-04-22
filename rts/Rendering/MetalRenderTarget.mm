@@ -15,6 +15,26 @@ public:
 	{
 	}
 
+	void ClearColor(const float4& newColor) override
+	{
+		clearColor = newColor;
+	}
+
+	void ClearDepth(float newDepth) override
+	{
+		clearDepth = newDepth;
+	}
+
+	void SetBlendState(const RenderTargetBlendState& newState) override
+	{
+		blendState = newState;
+	}
+
+	void SetDepthState(const RenderTargetDepthState& newState) override
+	{
+		depthState = newState;
+	}
+
 	void AttachNativeColor(unsigned int idx) override
 	{
 		nativeColorAttachment = idx;
@@ -64,6 +84,10 @@ public:
 private:
 	int2 size = {0, 0};
 	uint32_t nativeColorAttachment = 0;
+	float4 clearColor = float4(1.0f, 0.0f, 1.0f, 1.0f);
+	float clearDepth = 1.0f;
+	RenderTargetBlendState blendState;
+	RenderTargetDepthState depthState;
 };
 
 } // namespace
@@ -71,4 +95,11 @@ private:
 std::unique_ptr<IRenderTarget> CreateMetalRenderTarget()
 {
 	return std::make_unique<MetalRenderTarget>();
+}
+
+std::unique_ptr<IRenderTarget> CreateMetalDefaultRenderTarget()
+{
+	auto renderTarget = std::make_unique<MetalRenderTarget>();
+	renderTarget->AttachNativeColor(0);
+	return renderTarget;
 }

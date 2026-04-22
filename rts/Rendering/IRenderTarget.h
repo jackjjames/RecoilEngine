@@ -3,7 +3,24 @@
 #pragma once
 
 #include "Rendering/GL/myGL.h"
+#include "System/float4.h"
 #include "System/type2.h"
+
+struct RenderTargetBlendState
+{
+	bool enabled = false;
+	GLenum srcColor = GL_ONE;
+	GLenum dstColor = GL_ZERO;
+	GLenum srcAlpha = GL_ONE;
+	GLenum dstAlpha = GL_ZERO;
+};
+
+struct RenderTargetDepthState
+{
+	bool testEnabled = true;
+	bool writeEnabled = true;
+	GLenum func = GL_LEQUAL;
+};
 
 class IRenderTarget
 {
@@ -12,6 +29,10 @@ public:
 
 	virtual void Bind() = 0;
 	virtual void Unbind() = 0;
+	virtual void ClearColor(const float4& color) = 0;
+	virtual void ClearDepth(float depth) = 0;
+	virtual void SetBlendState(const RenderTargetBlendState& state) = 0;
+	virtual void SetDepthState(const RenderTargetDepthState& state) = 0;
 	virtual void AttachNativeColor(unsigned int idx) = 0;
 	virtual void AttachTexture(GLenum attachment, GLuint texId, GLuint texTarget, int mipLevel = 0, int zSlice = 0) = 0;
 	virtual void AttachRenderBuffer(GLenum attachment, GLuint rboId) = 0;

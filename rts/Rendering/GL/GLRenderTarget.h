@@ -7,3 +7,4 @@
 class IRenderTarget;
 
 std::unique_ptr<IRenderTarget> CreateGLRenderTarget();
+std::unique_ptr<IRenderTarget> CreateGLDefaultRenderTarget();

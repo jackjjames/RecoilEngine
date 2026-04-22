@@ -15,6 +15,16 @@
 #include "System/FileSystem/ArchiveScanner.h"
 #include "System/Platform/Watchdog.h"
 
+#if defined(RENDER_BACKEND_METAL)
+#include "Rendering/IRenderBackend.h"
+#include "Rendering/IBuffer.h"
+#include "Rendering/Shaders/IShaderPipeline.h"
+#include "Rendering/Textures/ITexture.h"
+#include "Rendering/Textures/TextureCreationParams.hpp"
+#include "System/Log/ILog.h"
+#include "System/type2.h"
+#endif
+
 #ifndef HEADLESS
 void ShowSplashScreen(
 	const std::string& splashScreenFile,
@@ -22,18 +32,124 @@ void ShowSplashScreen(
 	const std::function<bool()>& testDoneFunc
 ) {
 #if defined(RENDER_BACKEND_METAL)
-	// Textured quad + font on Metal come with the later S8-C5 sub-slices
-	// (the IShaderPipeline vertex/texture plumbing exists but the splash
-	// shader + CglFont backend are not wired yet). For now drive the
-	// presenter every frame so the window actually refreshes instead of
-	// staying black -- MetalFrame::Begin clears the drawable, and
-	// PresentFrame commits + presents the drawable. That alone gives a
-	// visible "alive" signal during VFS init and pumps the run loop so
-	// the SDL event queue drains.
-	(void)splashScreenFile;
+	// Metal splash path: textured full-screen quad via IShaderPipeline +
+	// IBuffer + ITexture. Font / version text lands in the next S8-C5
+	// sub-slice once CglFont has a Metal backend; for now the splash
+	// image alone replaces the all-black clear.
 	(void)springVersionStr;
+
+	// --- Load splash bitmap (forced to RGBA8 by the default reqChannel=4).
+	// If no splash file was found or Load failed, substitute a small
+	// visible placeholder so the draw path still exercises the pipeline +
+	// buffer + texture binding end-to-end, matching the GL placeholder
+	// behavior in the non-Metal path below.
+	CBitmap splashBmp;
+	const bool haveSplashImage = !splashScreenFile.empty() && splashBmp.Load(splashScreenFile);
+	if (!haveSplashImage)
+		splashBmp.AllocDummy({64, 64, 80, 255}); // dim slate, visibly non-black
+
+	// --- Create the splash texture. GL internalFormat 0x8058 == GL_RGBA8 is
+	// mapped by MetalTexture::MapGlInternalFormat to MTLPixelFormatRGBA8Unorm.
+	std::unique_ptr<ITexture> splashTex;
+	if (splashBmp.xsize > 0 && splashBmp.ysize > 0) {
+		GL::TextureCreationParams tcp;
+		tcp.linearTextureFilter = true;
+		tcp.linearMipMapFilter  = false;
+		tcp.reqNumLevels = 1;
+		constexpr uint32_t kGL_RGBA8 = 0x8058;
+		splashTex = globalRendering->renderBackend->CreateTexture2D(
+			int2(splashBmp.xsize, splashBmp.ysize), kGL_RGBA8, tcp, /*wantCompress=*/false);
+		if (splashTex && splashTex->IsValid())
+			splashTex->UploadImage(splashBmp.GetRawMem());
+	}
+
+	// --- Triangle list. Two floats of NDC position, two floats of UV;
+	// UV origin is top-left so uv.y=0 maps to the top of the texture,
+	// matching how CBitmap rows load and how replaceRegion uploaded them.
+	// Real splash image fills the viewport; placeholder renders as a small
+	// aspect-correct centered tile so the quad is obviously "alive" vs the
+	// previous all-black clear.
+	struct SplashVertex { float x, y, u, v; };
+	SplashVertex quadVerts[6];
+	if (haveSplashImage) {
+		const SplashVertex fs[6] = {
+			{-1.0f, -1.0f, 0.0f, 1.0f},
+			{ 1.0f, -1.0f, 1.0f, 1.0f},
+			{-1.0f,  1.0f, 0.0f, 0.0f},
+			{-1.0f,  1.0f, 0.0f, 0.0f},
+			{ 1.0f, -1.0f, 1.0f, 1.0f},
+			{ 1.0f,  1.0f, 1.0f, 0.0f},
+		};
+		memcpy(quadVerts, fs, sizeof(fs));
+	} else {
+		constexpr float hx = 0.125f;
+		const float hy = hx * globalRendering->aspectRatio;
+		const SplashVertex tile[6] = {
+			{-hx, -hy, 0.0f, 1.0f},
+			{ hx, -hy, 1.0f, 1.0f},
+			{-hx,  hy, 0.0f, 0.0f},
+			{-hx,  hy, 0.0f, 0.0f},
+			{ hx, -hy, 1.0f, 1.0f},
+			{ hx,  hy, 1.0f, 0.0f},
+		};
+		memcpy(quadVerts, tile, sizeof(tile));
+	}
+	auto quadBuf = globalRendering->renderBackend->CreateBuffer(sizeof(quadVerts), quadVerts);
+
+	// --- Pipeline. Minimal Vulkan-semantic GLSL 450 so the shared
+	// glslang -> spirv-cross pipeline (Shader::TranslateGlslToMsl) can
+	// turn it into MSL for MetalShaderPipeline::Link.
+	PipelineDesc pipelineDesc;
+	pipelineDesc.name = "splash_quad";
+	pipelineDesc.vertexSource = R"(#version 450
+layout(location = 0) in vec2 aPos;
+layout(location = 1) in vec2 aUV;
+layout(location = 0) out vec2 vUV;
+void main() {
+    vUV = aUV;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)";
+	pipelineDesc.fragmentSource = R"(#version 450
+layout(location = 0) in vec2 vUV;
+layout(location = 0) out vec4 fragColor;
+layout(set = 0, binding = 0) uniform sampler2D uTex;
+void main() {
+    fragColor = texture(uTex, vUV);
+}
+)";
+	pipelineDesc.vertexAttributes = {
+		VertexAttribute{ .location = 0, .bufferSlot = 0, .offset = 0,                     .format = VertexFormat::Float2 },
+		VertexAttribute{ .location = 1, .bufferSlot = 0, .offset = sizeof(float) * 2,     .format = VertexFormat::Float2 },
+	};
+	pipelineDesc.vertexBindings = {
+		VertexBindingLayout{ .slot = 0, .stride = sizeof(SplashVertex) },
+	};
+
+	auto pipeline = globalRendering->renderBackend->CreatePipeline(pipelineDesc);
+
+	const bool canDrawSplash =
+		pipeline != nullptr && pipeline->IsValid() &&
+		quadBuf  != nullptr && quadBuf->IsValid()  &&
+		splashTex != nullptr && splashTex->IsValid();
+
+	if (!canDrawSplash) {
+		LOG_L(L_INFO, "[ShowSplashScreen] Metal: splash draw disabled (haveImage=%d, pipelineValid=%d); falling back to clear",
+		      static_cast<int>(haveSplashImage),
+		      static_cast<int>(pipeline && pipeline->IsValid()));
+	}
+
 	while (!testDoneFunc()) {
 		globalRendering->BeginFrame();
+
+		if (canDrawSplash) {
+			pipeline->Enable();
+			pipeline->BindVertexBuffer(0, *quadBuf);
+			pipeline->BindTexture(0, *splashTex);
+			pipeline->Draw(PrimitiveTopology::Triangles, 0, 6);
+			pipeline->Disable();
+		}
+
 		globalRendering->PresentFrame(true, true);
 
 		SDL_Event event;
@@ -41,7 +157,7 @@ void ShowSplashScreen(
 		Watchdog::ClearTimer(WDT_MAIN);
 	}
 	return;
-#endif
+#else
 	CBitmap bmp;
 
 	VA_TYPE_2DT quadElems[] = {
@@ -136,6 +252,7 @@ void ShowSplashScreen(
 
 	glPopAttrib();
 	glDeleteTextures(1, &splashTex);
+#endif // !RENDER_BACKEND_METAL
 }
 #endif
 

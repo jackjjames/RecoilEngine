@@ -11,6 +11,7 @@ namespace {
 void* g_device = nullptr;
 void* g_commandQueue = nullptr;
 void* g_currentEncoder = nullptr;
+void* g_currentPipelineState = nullptr;
 
 std::array<BufferBinding, kMaxBindSlots> g_uniformBindings{};
 
@@ -45,5 +46,8 @@ void ClearBindings()
 	for (auto& binding : g_uniformBindings)
 		binding = BufferBinding{};
 }
+
+void SetCurrentPipelineState(void* pipelineState) { g_currentPipelineState = pipelineState; }
+void* GetCurrentPipelineState() { return g_currentPipelineState; }
 
 } // namespace MetalGlobals

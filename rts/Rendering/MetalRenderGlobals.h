@@ -44,4 +44,9 @@ void SetUniformBinding(uint32_t slot, const BufferBinding& binding);
 const BufferBinding& GetUniformBinding(uint32_t slot);
 void ClearBindings();
 
+// The pipeline currently targeted by Enable() -- draw replays it onto the
+// encoder at submission time. The pointer is an id<MTLRenderPipelineState>.
+void SetCurrentPipelineState(void* pipelineState);
+void* GetCurrentPipelineState();
+
 } // namespace MetalGlobals

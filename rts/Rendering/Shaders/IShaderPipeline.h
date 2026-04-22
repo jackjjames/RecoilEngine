@@ -2,12 +2,34 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
+
+#include "Rendering/IBuffer.h"
 
 namespace Shader {
 	struct IShaderObject;
 }
+
+struct ShaderReflectionEntry
+{
+	std::string name;
+	uint32_t binding = 0;
+};
+
+struct ShaderReflection
+{
+	std::vector<ShaderReflectionEntry> uniformBuffers;
+};
+
+struct PipelineDesc
+{
+	std::string name;
+	std::string vertexSource;
+	std::string fragmentSource;
+};
 
 class IShaderPipeline
 {
@@ -27,5 +49,20 @@ public:
 	virtual const std::string& GetName() const = 0;
 	virtual const std::string& GetLog() const = 0;
 	virtual bool IsValid() const = 0;
+	virtual void BindUniformBuffer(uint32_t slot, const IBuffer& buffer, size_t offset, size_t size)
+	{
+		buffer.BindUniformRange(slot, offset, size);
+	}
+	virtual void SetPushConstants(const void*, size_t) {}
+	virtual const ShaderReflection& GetReflection() const
+	{
+		static const ShaderReflection reflection;
+		return reflection;
+	}
+};
+
+class GLShaderPipeline : public IShaderPipeline
+{
+public:
 	virtual unsigned int GetObjID() const = 0;
 };

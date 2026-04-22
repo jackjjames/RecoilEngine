@@ -57,6 +57,7 @@ set(sources_engine_Rendering
 		"${CMAKE_CURRENT_SOURCE_DIR}/GL/GLBuffer.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/GL/GLRenderBackend.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/GL/GLRenderTarget.cpp"
+		"${CMAKE_CURRENT_SOURCE_DIR}/GL/GLStandaloneShaderPipeline.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/GL/glStateDebug.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/GL/glDebugGroup.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/GL/glxHandler.cpp"

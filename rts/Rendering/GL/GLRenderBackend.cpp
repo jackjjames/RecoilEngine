@@ -9,6 +9,7 @@
 #include "Rendering/GL/FBO.h"
 #include "Rendering/GL/GLBuffer.h"
 #include "Rendering/GL/GLRenderTarget.h"
+#include "Rendering/GL/GLStandaloneShaderPipeline.h"
 #include "Rendering/Platform/GLPresenter.h"
 #include "Rendering/Platform/SDLGLRenderContext.h"
 #include "Rendering/Textures/GL/GLTexture.h"
@@ -89,6 +90,11 @@ public:
 	std::unique_ptr<IBuffer> CreateBuffer(size_t size, const void* data) const override
 	{
 		return CreateGLBuffer(size, data);
+	}
+
+	std::unique_ptr<IShaderPipeline> CreatePipeline(const PipelineDesc& desc) const override
+	{
+		return CreateGLStandaloneShaderPipeline(desc);
 	}
 
 	const LuaGLCapabilities& GetLuaCapabilities() const override

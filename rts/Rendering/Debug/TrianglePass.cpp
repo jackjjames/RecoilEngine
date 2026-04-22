@@ -20,22 +20,22 @@ PipelineDesc BuildTrianglePipelineDesc()
 	return {
 		.name = "TrianglePass",
 		.vertexSource = R"(
-#version 330 core
+#version 450 core
 const vec2 positions[3] = vec2[3](
 	vec2(-0.75, -0.75),
 	vec2( 0.75, -0.75),
 	vec2( 0.00,  0.75)
 );
 void main() {
-	gl_Position = vec4(positions[gl_VertexID], 0.0, 1.0);
+	gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
 }
 )",
 		.fragmentSource = R"(
-#version 330 core
+#version 450 core
 layout(std140, binding = 0) uniform TrianglePassData {
 	vec4 color;
 };
-out vec4 outColor;
+layout(location = 0) out vec4 outColor;
 void main() {
 	outColor = color;
 }

@@ -22,16 +22,23 @@ void ShowSplashScreen(
 	const std::function<bool()>& testDoneFunc
 ) {
 #if defined(RENDER_BACKEND_METAL)
-	// Metal has no textured-quad / font pipeline through IShaderPipeline yet.
-	// Drop visuals, but keep the event-pump + watchdog loop so async VFS init
-	// (testDoneFunc) can finish. Visuals land with S8-C5.
+	// Textured quad + font on Metal come with the later S8-C5 sub-slices
+	// (the IShaderPipeline vertex/texture plumbing exists but the splash
+	// shader + CglFont backend are not wired yet). For now drive the
+	// presenter every frame so the window actually refreshes instead of
+	// staying black -- MetalFrame::Begin clears the drawable, and
+	// PresentFrame commits + presents the drawable. That alone gives a
+	// visible "alive" signal during VFS init and pumps the run loop so
+	// the SDL event queue drains.
 	(void)splashScreenFile;
 	(void)springVersionStr;
 	while (!testDoneFunc()) {
+		globalRendering->BeginFrame();
+		globalRendering->PresentFrame(true, true);
+
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {}
 		Watchdog::ClearTimer(WDT_MAIN);
-		SDL_Delay(4);
 	}
 	return;
 #endif

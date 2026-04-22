@@ -335,8 +335,21 @@ bool CLoadScreen::Draw()
 #endif
 	}
 
-	if (!mtLoading)
+	if (!mtLoading) {
+#if defined(RENDER_BACKEND_METAL)
+		// On GL the inline ClearScreen() above acts as the frame body and
+		// SwapBuffers presents it. On Metal we have no active drawable until
+		// BeginFrame is called, so SwapBuffers alone would commit nothing and
+		// the window stays black. Drive the presenter explicitly so each
+		// SetLoadMessage tick produces a committed, presented Metal frame
+		// (black clear for now). Textured quad + load progress text land
+		// with the next S8-C5 sub-slice.
+		globalRendering->BeginFrame();
+		globalRendering->PresentFrame(true, true);
+#else
 		globalRendering->SwapBuffers(true, false);
+#endif
+	}
 
 	return true;
 }

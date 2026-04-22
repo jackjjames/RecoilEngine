@@ -6,8 +6,6 @@
 #include "System/Config/ConfigHandler.h"
 #include "System/float4.h"
 
-#include "Rendering/GL/myGL.h"
-
 CONFIG(bool, DebugTrianglePass).defaultValue(false).description("Renders a backend-seam validation triangle before the world pass.");
 
 namespace {
@@ -68,9 +66,6 @@ void TrianglePass::Draw()
 	buffer->UpdateData(&uniforms, sizeof(uniforms), 0);
 	pipeline->BindUniformBuffer(0, *buffer, 0, sizeof(uniforms));
 	pipeline->Enable();
-
-	if (dynamic_cast<GLShaderPipeline*>(pipeline.get()) != nullptr)
-		glDrawArrays(GL_TRIANGLES, 0, 3);
-
+	pipeline->Draw(PrimitiveTopology::Triangles, 0, 3);
 	pipeline->Disable();
 }

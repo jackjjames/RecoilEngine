@@ -144,6 +144,23 @@ public:
 	bool IsValid() const override { return valid; }
 	unsigned int GetObjID() const override { return programId; }
 
+	void Draw(PrimitiveTopology topology, uint32_t firstVertex, uint32_t vertexCount) override
+	{
+		if (programId == 0 || vertexCount == 0)
+			return;
+
+		GLenum mode = GL_TRIANGLES;
+		switch (topology) {
+			case PrimitiveTopology::Triangles:     mode = GL_TRIANGLES; break;
+			case PrimitiveTopology::TriangleStrip: mode = GL_TRIANGLE_STRIP; break;
+			case PrimitiveTopology::Lines:         mode = GL_LINES; break;
+			case PrimitiveTopology::LineStrip:     mode = GL_LINE_STRIP; break;
+			case PrimitiveTopology::Points:        mode = GL_POINTS; break;
+		}
+
+		glDrawArrays(mode, static_cast<GLint>(firstVertex), static_cast<GLsizei>(vertexCount));
+	}
+
 private:
 	PipelineDesc desc;
 	std::string log;

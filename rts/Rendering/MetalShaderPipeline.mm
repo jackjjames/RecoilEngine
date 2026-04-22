@@ -144,6 +144,42 @@ public:
 	const std::string& GetLog() const override { return log; }
 	bool IsValid() const override { return valid; }
 
+	void Draw(PrimitiveTopology topology, uint32_t firstVertex, uint32_t vertexCount) override
+	{
+		if (!valid || vertexCount == 0)
+			return;
+
+		auto encoder = (__bridge id<MTLRenderCommandEncoder>)MetalGlobals::GetCurrentEncoder();
+		if (encoder == nil)
+			return;
+
+		[encoder setRenderPipelineState:pipelineState];
+
+		// Replay the pending uniform-buffer table onto both the vertex and
+		// fragment argument slots. spirv-cross maps Vulkan descriptor set 0
+		// bindings onto identical MTL buffer indices, so slot N goes to
+		// buffer(N) on both stages.
+		for (uint32_t slot = 0; slot < MetalGlobals::kMaxBindSlots; ++slot) {
+			const auto& binding = MetalGlobals::GetUniformBinding(slot);
+			if (binding.mtlBuffer == nullptr)
+				continue;
+			auto buf = (__bridge id<MTLBuffer>)binding.mtlBuffer;
+			[encoder setVertexBuffer:buf   offset:binding.offset atIndex:slot];
+			[encoder setFragmentBuffer:buf offset:binding.offset atIndex:slot];
+		}
+
+		MTLPrimitiveType primType = MTLPrimitiveTypeTriangle;
+		switch (topology) {
+			case PrimitiveTopology::Triangles:     primType = MTLPrimitiveTypeTriangle; break;
+			case PrimitiveTopology::TriangleStrip: primType = MTLPrimitiveTypeTriangleStrip; break;
+			case PrimitiveTopology::Lines:         primType = MTLPrimitiveTypeLine; break;
+			case PrimitiveTopology::LineStrip:     primType = MTLPrimitiveTypeLineStrip; break;
+			case PrimitiveTopology::Points:        primType = MTLPrimitiveTypePoint; break;
+		}
+
+		[encoder drawPrimitives:primType vertexStart:firstVertex vertexCount:vertexCount];
+	}
+
 private:
 	PipelineDesc desc;
 	std::string log;

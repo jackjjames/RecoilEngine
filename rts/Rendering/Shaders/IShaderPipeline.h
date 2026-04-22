@@ -31,6 +31,15 @@ struct PipelineDesc
 	std::string fragmentSource;
 };
 
+enum class PrimitiveTopology
+{
+	Triangles,
+	TriangleStrip,
+	Lines,
+	LineStrip,
+	Points,
+};
+
 class IShaderPipeline
 {
 public:
@@ -59,6 +68,15 @@ public:
 		static const ShaderReflection reflection;
 		return reflection;
 	}
+
+	// Issue a draw against the currently-enabled pipeline. Callers are
+	// expected to have called Enable() and any BindUniformBuffer() first.
+	// `firstVertex`/`vertexCount` follow glDrawArrays semantics.
+	//
+	// Default is a no-op so legacy engine shader program objects that live
+	// through IProgramObject do not need to implement it. Backend standalone
+	// pipelines (GL + Metal) override this.
+	virtual void Draw(PrimitiveTopology /*topology*/, uint32_t /*firstVertex*/, uint32_t /*vertexCount*/) {}
 };
 
 class GLShaderPipeline : public IShaderPipeline

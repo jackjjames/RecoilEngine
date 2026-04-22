@@ -45,7 +45,9 @@
 
 #include "System/Misc/TracyDefs.h"
 
+#if defined(RENDER_BACKEND_METAL)
 std::unique_ptr<IRenderBackend> CreateMetalRenderBackend();
+#endif
 
 namespace {
 

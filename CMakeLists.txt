@@ -20,7 +20,14 @@ endif()
 find_package(Threads REQUIRED)
 
 option(INSTALL_PORTABLE "Make a portable installation (instead of regular system installation)" TRUE)
-set(SPRING_RENDER_BACKEND "gl" CACHE STRING "Renderer backend implementation")
+# macOS OpenGL is capped at 4.1 core profile and deprecated by Apple; default the
+# render backend to metal there. Every other platform still defaults to gl.
+if (APPLE)
+	set(_spring_render_backend_default "metal")
+else()
+	set(_spring_render_backend_default "gl")
+endif()
+set(SPRING_RENDER_BACKEND "${_spring_render_backend_default}" CACHE STRING "Renderer backend implementation")
 set(_spring_render_backends gl)
 if (APPLE)
 	list(APPEND _spring_render_backends metal)

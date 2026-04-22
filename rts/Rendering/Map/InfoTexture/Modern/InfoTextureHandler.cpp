@@ -140,6 +140,12 @@ GLuint CInfoTextureHandler::GetCurrentInfoTexture() const
 	return (infoTex->GetTexture());
 }
 
+ITexture& CInfoTextureHandler::GetCurrentInfoTextureHandle() const
+{
+	RECOIL_DETAILED_TRACY_ZONE;
+	return infoTex->GetTextureHandle();
+}
+
 int2 CInfoTextureHandler::GetCurrentInfoTextureSize() const
 {
 	RECOIL_DETAILED_TRACY_ZONE;

@@ -108,16 +108,13 @@ void CHeightTexture::Update()
 	RECOIL_DETAILED_TRACY_ZONE;
 	needUpdate = false;
 
-	const auto hmTexID = readMap->GetHeightMapTexture();
-
 	using namespace GL::State;
 	auto state = GL::SubState(
 		Blending(GL_FALSE)
 	);
 	auto binding = paletteTex.ScopedBind(1);
 
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, hmTexID);
+	readMap->GetHeightMapTextureHandle().Bind(0);
 
 	RunFullScreenPass();
 }

@@ -493,26 +493,23 @@ void CGroundDecalHandler::BindTextures()
 	const CSMFReadMap* smfMap = smfDrawer->GetReadMap();
 
 	glActiveTexture(GL_TEXTURE2);
-	glBindTexture(GL_TEXTURE_2D, smfMap->GetMiniMapTexture());
+	smfMap->GetMiniMapTextureHandle().Bind(2);
 
-	glActiveTexture(GL_TEXTURE3);
-	glBindTexture(GL_TEXTURE_2D, smfMap->GetHeightMapTexture());
+	smfMap->GetHeightMapTextureHandle().Bind(3);
 
 	glActiveTexture(GL_TEXTURE4);
-	glBindTexture(GetDepthBufferTextureTarget(), depthBufferCopy->GetDepthBufferTexture(highQuality));
+	depthBufferCopy->GetDepthBufferTextureHandle(highQuality).Bind(4);
 
-	glActiveTexture(GL_TEXTURE5);
-	glBindTexture(GL_TEXTURE_2D, smfMap->GetNormalsTexture());
+	smfMap->GetNormalsTextureHandle().Bind(5);
 
 	if (shadowHandler.ShadowsLoaded()) {
 		shadowHandler.SetupShadowTexSampler(GL_TEXTURE6, true);
 
 		glActiveTexture(GL_TEXTURE7);
-		glBindTexture(GL_TEXTURE_2D, shadowHandler.GetColorTextureID());
+		shadowHandler.GetColorTextureHandle().Bind(7);
 	}
 
-	glActiveTexture(GL_TEXTURE8);
-	glBindTexture(GL_TEXTURE_2D, infoTextureHandler->GetCurrentInfoTexture());
+	infoTextureHandler->GetCurrentInfoTextureHandle().Bind(8);
 
 	glActiveTexture(GL_TEXTURE0);
 }

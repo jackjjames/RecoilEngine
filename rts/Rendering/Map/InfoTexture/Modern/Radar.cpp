@@ -130,8 +130,7 @@ void CRadarTexture::Update()
 	auto state = GL::SubState(
 		Blending(GL_FALSE)
 	);
-	glActiveTexture(GL_TEXTURE2);
-	glBindTexture(GL_TEXTURE_2D, infoTextureHandler->GetInfoTexture("los")->GetTexture());
+	infoTextureHandler->GetInfoTexture("los")->GetTextureHandle().Bind(2);
 	RunFullScreenPass();
 
 	// cleanup

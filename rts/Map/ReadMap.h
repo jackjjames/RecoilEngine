@@ -8,6 +8,8 @@
 
 #include "MapTexture.h"
 #include "MapDimensions.h"
+#include "Rendering/Textures/ITexture.h"
+#include "Rendering/Textures/NullTexture.h"
 #include "Sim/Misc/GlobalConstants.h"
 #include "Sim/Misc/GlobalSynced.h"
 #include "System/float3.h"
@@ -120,12 +122,17 @@ public:
 
 	virtual uint32_t GetGrassShadingTexture() const { return 0; }
 	virtual uint32_t GetMiniMapTexture() const { return 0; }
+	virtual ITexture& GetGrassShadingTextureHandle() const { return GetNullTexture(); }
+	virtual ITexture& GetMiniMapTextureHandle() const { return GetNullTexture(); }
 	/**
 	 * a texture with RGB for shading and A for height
 	 * (0 := above water; 1-255 := under water = 255+height*10)
 	 */
 	virtual uint32_t GetShadingTexture() const = 0;
 	virtual uint32_t GetHeightMapTexture() const = 0;
+	virtual ITexture& GetShadingTextureHandle() const { return GetNullTexture(); }
+	virtual ITexture& GetHeightMapTextureHandle() const { return GetNullTexture(); }
+	virtual ITexture& GetNormalsTextureHandle() const { return GetNullTexture(); }
 	virtual const MapTexture& GetHeightMapTextureObj() const = 0;
 
 	virtual uint32_t GetTexture(uint32_t type, uint32_t num = 0) const { return 0; }

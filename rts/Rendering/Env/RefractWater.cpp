@@ -96,7 +96,7 @@ void CRefractWater::SetupWaterDepthTex()
 	RECOIL_DETAILED_TRACY_ZONE;
 	glActiveTextureARB(GL_TEXTURE3_ARB);
 	glEnable(GL_TEXTURE_2D);
-	glBindTexture(GL_TEXTURE_2D, readMap->GetShadingTexture()); // the shading texture has water depth encoded in alpha
+	readMap->GetShadingTextureHandle().Bind(3); // the shading texture has water depth encoded in alpha
 	glEnable(GL_TEXTURE_GEN_S);
 	float splane[] = { 1.0f / (mapDims.mapxp1 * SQUARE_SIZE), 0.0f, 0.0f, 0.0f };
 	glTexGeni(GL_S,GL_TEXTURE_GEN_MODE,GL_OBJECT_LINEAR);

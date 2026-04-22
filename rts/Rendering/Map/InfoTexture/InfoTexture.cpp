@@ -2,6 +2,10 @@
 
 #include "InfoTexture.h"
 
+#include "Rendering/GlobalRendering.h"
+#include "Rendering/IRenderBackend.h"
+#include "Rendering/Textures/NullTexture.h"
+
 
 CInfoTexture::CInfoTexture()
 	: texture{}
@@ -13,3 +17,28 @@ CInfoTexture::CInfoTexture(const std::string& _name, GL::Texture2D&& _texture, i
 	, name(_name)
 	, texSize(_texSize)
 {}
+
+ITexture& CInfoTexture::GetTextureHandle() const
+{
+	if (!texture.IsValid())
+		return GetNullTexture();
+	if (globalRendering == nullptr || globalRendering->renderBackend == nullptr)
+		return GetNullTexture();
+
+	const uint32_t textureId = texture.GetId();
+
+	if (textureHandle == nullptr || textureHandleId != textureId) {
+		textureHandle = globalRendering->renderBackend->CreateImportedTexture(
+			texture.GetTarget(),
+			textureId,
+			texture.GetSize(),
+			texture.GetInternalFormat(),
+			texture.GetNumLevels(),
+			1,
+			false
+		);
+		textureHandleId = textureId;
+	}
+
+	return (textureHandle != nullptr) ? *textureHandle : GetNullTexture();
+}

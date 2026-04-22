@@ -225,14 +225,14 @@ void SMFRenderStateGLSL::Enable(const CSMFGroundDrawer* smfGroundDrawer, const D
 
 	if (isAdv && shadowHandler.ShadowsLoaded()) {
 		shadowHandler.SetupShadowTexSampler(GL_TEXTURE4, true);
-		glActiveTexture(GL_TEXTURE19); glBindTexture(GL_TEXTURE_2D, shadowHandler.GetColorTextureID());
+		shadowHandler.GetColorTextureHandle().Bind(19);
 	}
 
-	glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, smfMap->GetHeightMapTexture());
+	smfMap->GetHeightMapTextureHandle().Bind(1);
 	glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, smfMap->GetDetailTexture());
-	glActiveTexture(GL_TEXTURE14); glBindTexture(GL_TEXTURE_2D, infoTextureHandler->GetCurrentInfoTexture());
+	infoTextureHandler->GetCurrentInfoTextureHandle().Bind(14);
 	if (isAdv) {
-		glActiveTexture(GL_TEXTURE5); glBindTexture(GL_TEXTURE_2D, smfMap->GetNormalsTexture());
+		smfMap->GetNormalsTextureHandle().Bind(5);
 		glActiveTexture(GL_TEXTURE6); glBindTexture(GL_TEXTURE_2D, smfMap->GetSpecularTexture());
 		glActiveTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_2D, smfMap->GetSplatDetailTexture());
 		glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D, smfMap->GetSplatDistrTexture());
@@ -249,7 +249,7 @@ void SMFRenderStateGLSL::Enable(const CSMFGroundDrawer* smfGroundDrawer, const D
 		}
 	}
 	else {
-		glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, smfMap->GetShadingTexture());
+		smfMap->GetShadingTextureHandle().Bind(3);
 	}
 
 	glActiveTexture(GL_TEXTURE0);

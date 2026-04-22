@@ -113,7 +113,7 @@ void CMetalExtractionTexture::Update()
 	);
 
 	// do post-processing on the gpu (los-checking & scaling)
-	glBindTexture(GL_TEXTURE_2D, infoTex->GetTexture());
+	infoTex->GetTextureHandle().Bind();
 	RunFullScreenPass();
-	glBindTexture(GL_TEXTURE_2D, 0);
+	infoTex->GetTextureHandle().Unbind();
 }

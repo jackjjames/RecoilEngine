@@ -6,6 +6,7 @@
 
 #include "Rendering/GL/myGL.h"
 #include "Rendering/Map/InfoTexture/IInfoTextureHandler.h"
+#include "Rendering/Textures/NullTexture.h"
 #include "System/type2.h"
 #include "System/UnorderedMap.hpp"
 
@@ -34,6 +35,7 @@ public:
 	const std::vector<std::string> GetModes() const override;
 
 	GLuint GetCurrentInfoTexture() const override;
+	ITexture& GetCurrentInfoTextureHandle() const override;
 	int2 GetCurrentInfoTextureSize() const override;
 
 public:
@@ -74,6 +76,7 @@ public:
 	const std::vector<std::string> GetModes() const override { return std::vector<std::string>(); };
 
 	GLuint GetCurrentInfoTexture() const override { return 0; }
+	ITexture& GetCurrentInfoTextureHandle() const override { return GetNullTexture(); }
 	int2 GetCurrentInfoTextureSize() const override { return int2{ 1, 1 }; }
 
 public:

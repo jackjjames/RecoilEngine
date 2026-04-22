@@ -11,6 +11,8 @@
 #include "System/UnorderedMap.hpp"
 #include "System/ScopedResource.h"
 #include "Rendering/GL/RenderBuffersFwd.h"
+#include "Rendering/Textures/ITexture.h"
+#include "Rendering/Textures/NullTexture.h"
 #include "Rendering/Textures/TextureAtlas.h"
 
 class UnitDef;
@@ -106,6 +108,7 @@ namespace icon {
 
 			const auto& GetAtlasTextureIDs() const { return atlasTextureIDs; }
 			auto GetAtlasTextureID(size_t i) const { return atlasTextureIDs[i]; }
+			ITexture& GetAtlasTextureHandle(size_t i) const;
 			const auto& GetAtlasSize(size_t i) const { return atlasTextureSizes[i]; }
 
 			void DumpAtlasTextures(const std::string& fileExt = "png") const;
@@ -123,6 +126,8 @@ namespace icon {
 
 			std::array<uint32_t, 2> atlasTextureIDs = {};
 			std::array<int2, 2> atlasTextureSizes = {};
+			mutable std::array<std::unique_ptr<ITexture>, 2> atlasTextureHandles;
+			mutable std::array<uint32_t, 2> atlasTextureHandleIds = {};
 			std::array<std::unique_ptr<CTextureRenderAtlas>, 2> atlases;
 			std::bitset<2> atlasNeedsUpdate = { false };
 	};

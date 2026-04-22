@@ -646,12 +646,9 @@ void CGrassDrawer::SetupGlStateNear()
 	{
 		glActiveTextureARB(GL_TEXTURE0_ARB);
 			glBindTexture(GL_TEXTURE_2D, grassBladeTex);
-		glActiveTextureARB(GL_TEXTURE1_ARB);
-			glBindTexture(GL_TEXTURE_2D, readMap->GetGrassShadingTexture());
-		glActiveTextureARB(GL_TEXTURE2_ARB);
-			glBindTexture(GL_TEXTURE_2D, readMap->GetShadingTexture());
-		glActiveTextureARB(GL_TEXTURE3_ARB);
-			glBindTexture(GL_TEXTURE_2D, infoTextureHandler->GetCurrentInfoTexture());
+		readMap->GetGrassShadingTextureHandle().Bind(1);
+		readMap->GetShadingTextureHandle().Bind(2);
+		infoTextureHandler->GetCurrentInfoTextureHandle().Bind(3);
 		glActiveTextureARB(GL_TEXTURE5_ARB);
 			glBindTexture(GL_TEXTURE_CUBE_MAP_ARB, cubeMapHandler.GetSpecularTextureID());
 	}
@@ -661,7 +658,7 @@ void CGrassDrawer::SetupGlStateNear()
 
 	if (shadowHandler.ShadowsLoaded()) {
 		shadowHandler.SetupShadowTexSampler(GL_TEXTURE4);
-		glActiveTexture(GL_TEXTURE6); glBindTexture(GL_TEXTURE_2D, shadowHandler.GetColorTextureID());
+		shadowHandler.GetColorTextureHandle().Bind(6);
 	}
 
 	glMatrixMode(GL_PROJECTION);
@@ -725,16 +722,13 @@ void CGrassDrawer::SetupGlStateFar()
 
 	glActiveTextureARB(GL_TEXTURE0_ARB);
 		glBindTexture(GL_TEXTURE_2D, farTex);
-	glActiveTextureARB(GL_TEXTURE1_ARB);
-		glBindTexture(GL_TEXTURE_2D, readMap->GetGrassShadingTexture());
-	glActiveTextureARB(GL_TEXTURE2_ARB);
-		glBindTexture(GL_TEXTURE_2D, readMap->GetShadingTexture());
-	glActiveTextureARB(GL_TEXTURE3_ARB);
-		glBindTexture(GL_TEXTURE_2D, infoTextureHandler->GetCurrentInfoTexture());
+	readMap->GetGrassShadingTextureHandle().Bind(1);
+	readMap->GetShadingTextureHandle().Bind(2);
+	infoTextureHandler->GetCurrentInfoTextureHandle().Bind(3);
 
 	if (shadowHandler.ShadowsLoaded()) {
 		shadowHandler.SetupShadowTexSampler(GL_TEXTURE4);
-		glActiveTexture(GL_TEXTURE6); glBindTexture(GL_TEXTURE_2D, shadowHandler.GetColorTextureID());
+		shadowHandler.GetColorTextureHandle().Bind(6);
 	}
 
 	glActiveTextureARB(GL_TEXTURE0_ARB);

@@ -936,11 +936,11 @@ void CBumpWater::Draw()
 		waterShader->SetUniformMatrix4x4("shadowMatrix", false, shadowHandler.GetShadowMatrixRaw());
 
 		shadowHandler.SetupShadowTexSampler(GL_TEXTURE9);
-		glActiveTexture(GL_TEXTURE11); glBindTexture(GL_TEXTURE_2D, shadowHandler.GetColorTextureID());
+		shadowHandler.GetColorTextureHandle().Bind(11);
 	}
 
 	const int causticTexNum = (gs->frameNum % caustTextures.size());
-	glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, readMap->GetShadingTexture());
+	readMap->GetShadingTextureHandle().Bind(1);
 	glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, caustTextures[causticTexNum]);
 	glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, foamTexture);
 	glActiveTexture(GL_TEXTURE4); glBindTexture(GL_TEXTURE_2D, reflectTexture);
@@ -949,7 +949,7 @@ void CBumpWater::Draw()
 	glActiveTexture(GL_TEXTURE7); glBindTexture(target,        depthTexture);
 	glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D, waveRandTexture);
 	//glActiveTexture(GL_TEXTURE9); see above
-	glActiveTexture(GL_TEXTURE10); glBindTexture(GL_TEXTURE_2D, infoTextureHandler->GetCurrentInfoTexture());
+	infoTextureHandler->GetCurrentInfoTextureHandle().Bind(10);
 	//glActiveTexture(GL_TEXTURE11); see above
 	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, normalTexture);
 

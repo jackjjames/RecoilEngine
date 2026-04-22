@@ -354,7 +354,7 @@ void CSMFGroundDrawer::DrawBorder(const DrawPass::e drawPass)
 	glBindTexture(GL_TEXTURE_2D, smfMap->GetDetailTexture());
 
 	glActiveTexture(GL_TEXTURE1); glEnable(GL_TEXTURE_2D);
-	glBindTexture(GL_TEXTURE_2D, smfMap->GetHeightMapTexture());
+	smfMap->GetHeightMapTextureHandle().Bind(1);
 
 	//for CSMFGroundTextures::BindSquareTexture()
 	glActiveTexture(GL_TEXTURE0); glEnable(GL_TEXTURE_2D);
@@ -405,7 +405,7 @@ void CSMFGroundDrawer::DrawShadowPass()
 
 	glPolygonOffset(spPolygonOffsetScale, spPolygonOffsetUnits); // dz*s + r*u
 
-	glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, smfMap->GetHeightMapTexture());
+	smfMap->GetHeightMapTextureHandle().Bind(1);
 	shadowShader->Enable();
 	shadowShader->SetUniform("borderMinHeight", std::min(readMap->GetInitMinHeight(), -500.0f));
 		meshDrawer->DrawMesh(DrawPass::Shadow);

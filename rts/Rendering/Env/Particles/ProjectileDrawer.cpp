@@ -818,7 +818,7 @@ void CProjectileDrawer::DrawAlpha(bool drawAboveWater, bool drawBelowWater, bool
 		glActiveTexture(GL_TEXTURE0); textureAtlas->BindTexture();
 
 		if (needSoften) {
-			glActiveTexture(GL_TEXTURE15); glBindTexture(GL_TEXTURE_2D, depthBufferCopy->GetDepthBufferTexture(false));
+			depthBufferCopy->GetDepthBufferTextureHandle(false).Bind(15);
 		}
 
 		const auto camPlayer = CCameraHandler::GetCamera(CCamera::CAMTYPE_PLAYER);
@@ -1035,7 +1035,7 @@ void CProjectileDrawer::DrawGroundFlashes()
 	auto& rb = CExpGenSpawnable::GetPrimaryRenderBuffer();
 
 	if (needSoften) {
-		glActiveTexture(GL_TEXTURE15); glBindTexture(GL_TEXTURE_2D, depthBufferCopy->GetDepthBufferTexture(false));
+		depthBufferCopy->GetDepthBufferTextureHandle(false).Bind(15);
 	}
 
 	const auto camPlayer = CCameraHandler::GetCamera(CCamera::CAMTYPE_PLAYER);

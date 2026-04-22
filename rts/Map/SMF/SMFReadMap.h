@@ -107,6 +107,11 @@ public:
 	uint32_t GetShadingTexture() const override { return shadingTex.GetID(); }
 	uint32_t GetHeightMapTexture() const override { return heightMapTexture.GetID(); }
 	uint32_t GetNormalsTexture() const  { return normalsTex.GetID(); }
+	ITexture& GetGrassShadingTextureHandle() const override;
+	ITexture& GetMiniMapTextureHandle() const override;
+	ITexture& GetShadingTextureHandle() const override;
+	ITexture& GetHeightMapTextureHandle() const override;
+	ITexture& GetNormalsTextureHandle() const override;
 
 	uint32_t GetSpecularTexture() const { return specularTex.GetID(); }
 	uint32_t GetBlendNormalsTexture() const { return blendNormalsTex.GetID(); }
@@ -153,6 +158,7 @@ public:
 	}
 
 private:
+	ITexture& WrapTextureHandle(const MapTexture& mapTex, uint32_t internalFormat, size_t slot) const;
 	void UpdateHeightMapUnsynced(const SRectangle&) override;
 	void UpdateHeightMapUnsyncedPost() override;
 
@@ -229,6 +235,8 @@ private:
 	MapTexture parallaxHeightTex;
 
 	MapTexture heightMapTexture;
+	mutable std::array<std::unique_ptr<ITexture>, 5> textureHandles;
+	mutable std::array<uint32_t, 5> textureHandleIds = {};
 private:
 	float texAnisotropyLevels[2] = {0.0f, 0.0f};
 

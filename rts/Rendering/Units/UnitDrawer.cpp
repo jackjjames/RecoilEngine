@@ -481,10 +481,9 @@ void CUnitDrawerGLSL::DrawUnitMiniMapIcons() const
 	if (!rb.ShouldSubmit())
 		return;
 
-	const auto& atlasTexIDs = icon::iconHandler.GetAtlasTextureIDs();
-	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, atlasTexIDs[0]);
-	if (atlasTexIDs[1]) {
-		glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, atlasTexIDs[1]);
+	icon::iconHandler.GetAtlasTextureHandle(0).Bind(0);
+	if (icon::iconHandler.GetAtlasTextureID(1)) {
+		icon::iconHandler.GetAtlasTextureHandle(1).Bind(1);
 	}
 
 	icons2DShader->Enable();
@@ -495,7 +494,7 @@ void CUnitDrawerGLSL::DrawUnitMiniMapIcons() const
 	icons2DShader->SetUniform("alphaCtrl", 0.0f, 0.0f, 0.0f, 1.0f);
 	icons2DShader->Disable();
 
-	if (atlasTexIDs[1])
+	if (icon::iconHandler.GetAtlasTextureID(1))
 		glBindTexture(GL_TEXTURE_2D, 0);
 
 	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, 0);
@@ -591,10 +590,9 @@ void CUnitDrawerGLSL::DrawUnitIcons() const
 		AlphaToCoverage(globalRendering->msaaLevel >= 4 ? GL_TRUE : GL_FALSE)
 	);
 
-	const auto& atlasTexIDs = icon::iconHandler.GetAtlasTextureIDs();
-	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, atlasTexIDs[0]);
-	if (atlasTexIDs[1]) {
-		glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, atlasTexIDs[1]);
+	icon::iconHandler.GetAtlasTextureHandle(0).Bind(0);
+	if (icon::iconHandler.GetAtlasTextureID(1)) {
+		icon::iconHandler.GetAtlasTextureHandle(1).Bind(1);
 	}
 
 	icons3DShader->Enable();
@@ -605,7 +603,7 @@ void CUnitDrawerGLSL::DrawUnitIcons() const
 	icons3DShader->SetUniform("alphaCtrl", 0.0f, 0.0f, 0.0f, 1.0f);
 	icons3DShader->Disable();
 
-	if (atlasTexIDs[1])
+	if (icon::iconHandler.GetAtlasTextureID(1))
 		glBindTexture(GL_TEXTURE_2D, 0);
 
 	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, 0);
@@ -743,10 +741,9 @@ void CUnitDrawerGLSL::DrawUnitIconsScreen() const
 		BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 	);
 
-	const auto& atlasTexIDs = icon::iconHandler.GetAtlasTextureIDs();
-	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, atlasTexIDs[0]);
-	if (atlasTexIDs[1]) {
-		glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, atlasTexIDs[1]);
+	icon::iconHandler.GetAtlasTextureHandle(0).Bind(0);
+	if (icon::iconHandler.GetAtlasTextureID(1)) {
+		icon::iconHandler.GetAtlasTextureHandle(1).Bind(1);
 	}
 
 	icons3DShader->Enable();
@@ -757,7 +754,7 @@ void CUnitDrawerGLSL::DrawUnitIconsScreen() const
 	icons3DShader->SetUniform("alphaCtrl", 0.0f, 0.0f, 0.0f, 1.0f);
 	icons3DShader->Disable();
 
-	if (atlasTexIDs[1])
+	if (icon::iconHandler.GetAtlasTextureID(1))
 		glBindTexture(GL_TEXTURE_2D, 0);
 
 	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, 0);

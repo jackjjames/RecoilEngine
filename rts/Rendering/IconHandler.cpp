@@ -11,6 +11,8 @@
 #include <fmt/format.h>
 
 #include "Rendering/GL/myGL.h"
+#include "Rendering/GlobalRendering.h"
+#include "Rendering/IRenderBackend.h"
 #include "Rendering/GL/RenderBuffers.h"
 #include "System/Log/ILog.h"
 #include "System/UnorderedSet.hpp"
@@ -37,12 +39,39 @@ void CIconHandler::Kill()
 	glDeleteTextures(2, atlasTextureIDs.data());
 	atlasTextureIDs = { 0 };
 	atlasTextureSizes = { int2{0, 0}, int2{0, 0} };
+	atlasTextureHandles = {};
+	atlasTextureHandleIds = {};
 
 	atlases = { nullptr };
 	atlasNeedsUpdate = { false };
 
 	iconsMap.clear();
 	iconsData.clear();
+}
+
+ITexture& CIconHandler::GetAtlasTextureHandle(size_t i) const
+{
+	if (i >= atlasTextureIDs.size())
+		return GetNullTexture();
+	if (globalRendering == nullptr || globalRendering->renderBackend == nullptr)
+		return GetNullTexture();
+	if (atlasTextureIDs[i] == 0)
+		return GetNullTexture();
+
+	if (atlasTextureHandles[i] == nullptr || atlasTextureHandleIds[i] != atlasTextureIDs[i]) {
+		atlasTextureHandles[i] = globalRendering->renderBackend->CreateImportedTexture(
+			GL_TEXTURE_2D,
+			atlasTextureIDs[i],
+			atlasTextureSizes[i],
+			GL_RGBA8,
+			DEFAULT_NUM_OF_TEXTURE_LEVELS,
+			1,
+			false
+		);
+		atlasTextureHandleIds[i] = atlasTextureIDs[i];
+	}
+
+	return (atlasTextureHandles[i] != nullptr) ? *atlasTextureHandles[i] : GetNullTexture();
 }
 
 

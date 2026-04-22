@@ -13,6 +13,7 @@
 #include "Game/CameraHandler.h"
 #include "Game/LoadScreen.h"
 #include "Rendering/GlobalRendering.h"
+#include "Rendering/IRenderBackend.h"
 #include "Rendering/Env/WaterRendering.h"
 #include "Rendering/Env/SunLighting.h"
 #include "Rendering/Env/ISky.h"
@@ -25,6 +26,7 @@
 #include "Rendering/Shaders/ShaderHandler.h"
 #include "Rendering/Shaders/Shader.h"
 #include "Rendering/Map/InfoTexture/IInfoTextureHandler.h"
+#include "Rendering/Textures/NullTexture.h"
 #include "Rendering/Textures/Bitmap.h"
 #include "System/Config/ConfigHandler.h"
 #include "System/EventHandler.h"
@@ -53,6 +55,18 @@ std::vector<float> CSMFReadMap::cornerHeightMapSynced;
 std::vector<float> CSMFReadMap::cornerHeightMapUnsynced;
 
 static std::vector<float> normalPixels;
+
+namespace {
+
+enum TextureHandleSlot {
+	TEX_HANDLE_GRASS = 0,
+	TEX_HANDLE_MINIMAP = 1,
+	TEX_HANDLE_SHADING = 2,
+	TEX_HANDLE_HEIGHT = 3,
+	TEX_HANDLE_NORMALS = 4,
+};
+
+}
 
 CSMFReadMap::CSMFReadMap(const std::string& mapName): CEventClient("[CSMFReadMap]", 271950, false)
 {
@@ -109,6 +123,56 @@ CSMFReadMap::~CSMFReadMap()
 	shadingFBO = nullptr;
 	shaderHandler->ReleaseProgramObject("[CSMFReadMap]", "ShadingShader");
 	mapFile.Close();
+}
+
+ITexture& CSMFReadMap::WrapTextureHandle(const MapTexture& mapTex, uint32_t internalFormat, size_t slot) const
+{
+	if (globalRendering == nullptr || globalRendering->renderBackend == nullptr)
+		return GetNullTexture();
+
+	const uint32_t textureId = mapTex.GetID();
+	if (textureId == 0)
+		return GetNullTexture();
+
+	if (textureHandles[slot] == nullptr || textureHandleIds[slot] != textureId) {
+		textureHandles[slot] = globalRendering->renderBackend->CreateImportedTexture(
+			GL_TEXTURE_2D,
+			textureId,
+			mapTex.GetSize(),
+			internalFormat,
+			1,
+			1,
+			false
+		);
+		textureHandleIds[slot] = textureId;
+	}
+
+	return (textureHandles[slot] != nullptr) ? *textureHandles[slot] : GetNullTexture();
+}
+
+ITexture& CSMFReadMap::GetGrassShadingTextureHandle() const
+{
+	return WrapTextureHandle(grassShadingTex, GL_RGBA8, TEX_HANDLE_GRASS);
+}
+
+ITexture& CSMFReadMap::GetMiniMapTextureHandle() const
+{
+	return WrapTextureHandle(minimapTex, GL_RGBA8, TEX_HANDLE_MINIMAP);
+}
+
+ITexture& CSMFReadMap::GetShadingTextureHandle() const
+{
+	return WrapTextureHandle(shadingTex, GL_RGBA8, TEX_HANDLE_SHADING);
+}
+
+ITexture& CSMFReadMap::GetHeightMapTextureHandle() const
+{
+	return WrapTextureHandle(heightMapTexture, GL_R32F, TEX_HANDLE_HEIGHT);
+}
+
+ITexture& CSMFReadMap::GetNormalsTextureHandle() const
+{
+	return WrapTextureHandle(normalsTex, GL_RG16F, TEX_HANDLE_NORMALS);
 }
 
 
@@ -806,11 +870,11 @@ void CSMFReadMap::BindMiniMapTextures() const
 
 	// tc (0,0) - (isx,isy)
 	if (infoTextureHandler->IsEnabled()) {
-		glBindTexture(GL_TEXTURE_2D, infoTextureHandler->GetCurrentInfoTexture());
+		infoTextureHandler->GetCurrentInfoTextureHandle().Bind(2);
 	}
 	else {
 		// just bind this since HAVE_INFOTEX is not available to the minimap shader
-		glBindTexture(GL_TEXTURE_2D, shadingTex.GetID());
+		GetShadingTextureHandle().Bind(2);
 	}
 
 	// tc (0,0) - (isx,isy)

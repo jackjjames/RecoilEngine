@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Rendering/GL/myGL.h"
+#include "Rendering/Textures/ITexture.h"
 #include "System/type2.h"
 #include <string>
 #include <memory>
@@ -52,6 +53,7 @@ public:
 	virtual const std::vector<std::string> GetModes() const = 0;
 
 	virtual GLuint GetCurrentInfoTexture() const = 0;
+	virtual ITexture& GetCurrentInfoTextureHandle() const = 0;
 	virtual int2   GetCurrentInfoTextureSize() const = 0;
 
 public:

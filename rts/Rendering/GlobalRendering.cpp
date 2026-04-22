@@ -620,12 +620,27 @@ void CGlobalRendering::CheckGLExtensions()
 	char errMsg[2048] = {0};
 	char* ptr = &extMsg[0];
 
-	if (!GLAD_GL_ARB_multitexture       ) ptr += snprintf(ptr, sizeof(extMsg) - (ptr - extMsg), " multitexture ");
-	if (!GLAD_GL_ARB_texture_env_combine) ptr += snprintf(ptr, sizeof(extMsg) - (ptr - extMsg), " texture_env_combine ");
-	if (!GLAD_GL_ARB_texture_compression) ptr += snprintf(ptr, sizeof(extMsg) - (ptr - extMsg), " texture_compression ");
-	if (!GLAD_GL_ARB_texture_float)       ptr += snprintf(ptr, sizeof(extMsg) - (ptr - extMsg), " texture_float ");
-	if (!GLAD_GL_ARB_texture_non_power_of_two) ptr += snprintf(ptr, sizeof(extMsg) - (ptr - extMsg), " texture_non_power_of_two ");
-	if (!GLAD_GL_ARB_framebuffer_object)       ptr += snprintf(ptr, sizeof(extMsg) - (ptr - extMsg), " framebuffer_object ");
+	// On core-profile contexts (>= 3.0), a bunch of these ARB extensions were
+	// folded into the core spec and are no longer advertised as extension
+	// strings. GLAD's GLAD_GL_ARB_* booleans go to zero even though the
+	// underlying functionality is guaranteed. Skip those checks on core so
+	// drivers that only ship a core profile (macOS, mesa core-only, some
+	// mobile ports via ANGLE) can still boot.
+	//
+	// ARB_texture_env_combine is a fixed-function-pipeline extension; it has
+	// been removed from core profile entirely. We intentionally don't check
+	// for it -- the correct path is to scrub any remaining fixed-function
+	// paths in follow-up commits.
+	const bool isCoreGL3Plus = globalRenderingInfo.glContextIsCore
+		&& (globalRenderingInfo.glContextVersion.x >= 3);
+
+	if (!isCoreGL3Plus) {
+		if (!GLAD_GL_ARB_multitexture       ) ptr += snprintf(ptr, sizeof(extMsg) - (ptr - extMsg), " multitexture ");
+		if (!GLAD_GL_ARB_texture_compression) ptr += snprintf(ptr, sizeof(extMsg) - (ptr - extMsg), " texture_compression ");
+		if (!GLAD_GL_ARB_texture_float)       ptr += snprintf(ptr, sizeof(extMsg) - (ptr - extMsg), " texture_float ");
+		if (!GLAD_GL_ARB_texture_non_power_of_two) ptr += snprintf(ptr, sizeof(extMsg) - (ptr - extMsg), " texture_non_power_of_two ");
+		if (!GLAD_GL_ARB_framebuffer_object)       ptr += snprintf(ptr, sizeof(extMsg) - (ptr - extMsg), " framebuffer_object ");
+	}
 
 	if (extMsg[0] == 0)
 		return;

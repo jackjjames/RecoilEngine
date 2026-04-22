@@ -662,9 +662,18 @@ void CGlobalRendering::SetGLSupportFlags()
 	const std::string& glRenderer = StringToLower(globalRenderingInfo.glRenderer);
 	const std::string& glVersion = StringToLower(globalRenderingInfo.glVersion);
 
+	// ARB_vertex_shader / ARB_fragment_shader were folded into core GL 2.0
+	// and are no longer advertised as extension strings on core-profile
+	// contexts. Treat core GL >= 2.0 as implicitly having shader support and
+	// key the haveGLSL check off the GLSL_VERSION string + GLAD_GL_VERSION_2_0
+	// gate instead of the ARB booleans (which read false on macOS core).
+	const bool isCoreGL2Plus = globalRenderingInfo.glContextIsCore
+		&& (globalRenderingInfo.glContextVersion.x >= 2);
+
 	bool haveGLSL  = (glGetString(GL_SHADING_LANGUAGE_VERSION) != nullptr);
-	haveGLSL &= static_cast<bool>(GLAD_GL_ARB_vertex_shader && GLAD_GL_ARB_fragment_shader);
 	haveGLSL &= static_cast<bool>(GLAD_GL_VERSION_2_0); // we want OpenGL 2.0 core functions
+	if (!isCoreGL2Plus)
+		haveGLSL &= static_cast<bool>(GLAD_GL_ARB_vertex_shader && GLAD_GL_ARB_fragment_shader);
 	haveGLSL |= underExternalDebug;
 
 	#ifndef HEADLESS

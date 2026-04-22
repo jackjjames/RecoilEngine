@@ -167,6 +167,7 @@ if (APPLE AND SPRING_RENDER_BACKEND STREQUAL "metal")
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalShaderPipeline.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/MetalPresenter.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/MetalRenderContext.mm"
+		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/MetalOffscreenFrame.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/ShaderTranslator.cpp"
 	)
 endif()

@@ -83,4 +83,11 @@ class GLShaderPipeline : public IShaderPipeline
 {
 public:
 	virtual unsigned int GetObjID() const = 0;
+
+	// GL-only convenience for legacy consumers that still need a raw
+	// glGetUniformLocation. Returns -1 by default so this is safe to call
+	// through the base pointer even when other backends live at the other
+	// end. Named LookupUniformLocation to avoid clashing with the existing
+	// private pure-virtual int GetUniformLoc(const char*) on IProgramObject.
+	virtual int LookupUniformLocation(const char* /*name*/) const { return -1; }
 };

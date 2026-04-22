@@ -182,6 +182,13 @@ namespace Shader {
 
 		unsigned int GetObjID() const override { return objID; }
 
+		int LookupUniformLocation(const char* name) const override
+		{
+			if (objID == 0)
+				return -1;
+			return const_cast<IProgramObject*>(this)->GetUniformLoc(name);
+		}
+
 		const std::string& GetName() const override { return name; }
 		const std::string& GetLog() const override { return log; }
 

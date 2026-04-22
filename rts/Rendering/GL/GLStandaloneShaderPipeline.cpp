@@ -144,6 +144,11 @@ public:
 	bool IsValid() const override { return valid; }
 	unsigned int GetObjID() const override { return programId; }
 
+	int LookupUniformLocation(const char* name) const override
+	{
+		return programId != 0 ? glGetUniformLocation(programId, name) : -1;
+	}
+
 	void Draw(PrimitiveTopology topology, uint32_t firstVertex, uint32_t vertexCount) override
 	{
 		if (programId == 0 || vertexCount == 0)

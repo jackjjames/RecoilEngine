@@ -55,6 +55,16 @@ namespace Threading {
 	NativeThreadHandle GetCurrentThread();
 	NativeThreadId GetCurrentThreadId();
 
+	inline uint64_t GetCurrentThreadIdAsUInt64() {
+#ifdef _WIN32
+		return static_cast<uint64_t>(GetCurrentThreadId());
+#elif defined(__APPLE__)
+		return reinterpret_cast<uint64_t>(GetCurrentThreadId());
+#else
+		return static_cast<uint64_t>(GetCurrentThreadId());
+#endif
+	}
+
 #ifndef _WIN32
 	extern thread_local std::shared_ptr<ThreadControls> localThreadControls;
 #endif

@@ -203,8 +203,8 @@ void GLTexture::UploadSubImage(const void* data, int xOffset, int yOffset, int w
 	}
 
 	if (texture == nullptr) {
-		const auto extFormat = GetExternalFormatFromInternalFormat(internalFormat);
-		const auto dataType = GetDataTypeFromInternalFormat(internalFormat);
+		const auto extFormat = GL::GetExternalFormatFromInternalFormat(internalFormat);
+		const auto dataType = GL::GetDataTypeFromInternalFormat(internalFormat);
 
 		if (texTarget == GL_TEXTURE_2D) {
 			glTexSubImage2D(texTarget, level, xOffset, yOffset, width, height, extFormat, dataType, data);

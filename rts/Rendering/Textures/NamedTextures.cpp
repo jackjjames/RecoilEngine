@@ -19,6 +19,8 @@
 
 
 namespace CNamedTextures {
+	static void DeleteTexture(TexInfo& texInfo);
+
 	// maps names to texInfoVec indices
 	static spring::unordered_map<std::string, size_t> texInfoMap;
 

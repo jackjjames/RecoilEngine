@@ -6,7 +6,7 @@
 #include <memory>
 #include <string>
 
-class ITexture;
+#include "Rendering/Textures/ITexture.h"
 
 namespace CNamedTextures {
 	void Init();

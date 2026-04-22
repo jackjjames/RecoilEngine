@@ -522,10 +522,12 @@ GLuint LuaMatTexture::GetTextureID() const
 
 		// object model-textures
 		case LUATEX_UNITTEXTURE1: {
-			texID = textureHandlerS3O.GetTexture(*reinterpret_cast<const int*>(&data))->tex1;
+			const auto* s3oTex = textureHandlerS3O.GetTexture(*reinterpret_cast<const int*>(&data));
+			texID = (s3oTex && s3oTex->tex1) ? s3oTex->tex1->GetNativeId() : 0;
 		} break;
 		case LUATEX_UNITTEXTURE2: {
-			texID = textureHandlerS3O.GetTexture(*reinterpret_cast<const int*>(&data))->tex2;
+			const auto* s3oTex = textureHandlerS3O.GetTexture(*reinterpret_cast<const int*>(&data));
+			texID = (s3oTex && s3oTex->tex2) ? s3oTex->tex2->GetNativeId() : 0;
 		} break;
 		case LUATEX_3DOTEXTURE: {
 			if (*reinterpret_cast<const int*>(&data) == 1) {

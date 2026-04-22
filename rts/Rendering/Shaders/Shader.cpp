@@ -4,6 +4,7 @@
 #include "Rendering/Shaders/ShaderHandler.h"
 #include "Rendering/Shaders/LuaShaderContainer.h"
 #include "Rendering/Shaders/GLSLCopyState.h"
+#include "Lua/LuaOpenGLUtils.h"
 #include "Rendering/GL/myGL.h"
 #include "Rendering/GlobalRendering.h"
 

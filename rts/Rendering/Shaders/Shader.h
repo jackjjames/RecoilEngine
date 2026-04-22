@@ -18,10 +18,7 @@
 #include "Rendering/GL/VertexArrayTypes.h"
 
 struct lua_State;
-class LuaOpenGLUtils {
-public:
-	static bool ParseTextureImage(lua_State* L, LuaMatTexture& texUnit, const std::string& image);
-};
+class LuaOpenGLUtils;
 
 struct fast_hash
 {
@@ -126,7 +123,7 @@ namespace Shader {
 		IProgramObject* prog = nullptr;
 	};
 
-	struct IProgramObject: public ::IShaderPipeline {
+	struct IProgramObject: public ::GLShaderPipeline {
 	public:
 		IProgramObject(const std::string& poName);
 		virtual ~IProgramObject() {}

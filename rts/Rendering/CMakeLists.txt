@@ -4,6 +4,7 @@
 set(sources_engine_Rendering
 		"${CMAKE_CURRENT_SOURCE_DIR}/AVIGenerator.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/DebugColVolDrawer.cpp"
+		"${CMAKE_CURRENT_SOURCE_DIR}/Debug/TrianglePass.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/DebugVisibilityDrawer.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/DepthBufferCopy.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/DebugDrawerAI.cpp"
@@ -160,7 +161,9 @@ set(sources_engine_Rendering
 if (APPLE AND SPRING_RENDER_BACKEND STREQUAL "metal")
 	list(APPEND sources_engine_Rendering
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalRenderBackend.mm"
+		"${CMAKE_CURRENT_SOURCE_DIR}/MetalBuffer.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalRenderTarget.mm"
+		"${CMAKE_CURRENT_SOURCE_DIR}/MetalShaderPipeline.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/MetalPresenter.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/MetalRenderContext.mm"
 	)

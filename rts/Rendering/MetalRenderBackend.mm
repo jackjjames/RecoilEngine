@@ -10,6 +10,8 @@
 std::unique_ptr<IRenderContext> CreateMetalRenderContext();
 std::unique_ptr<IPresenter> CreateMetalPresenter();
 std::unique_ptr<IRenderTarget> CreateMetalRenderTarget();
+std::unique_ptr<IBuffer> CreateMetalBuffer(size_t size, const void* data = nullptr);
+std::unique_ptr<IShaderPipeline> CreateMetalShaderPipeline(const PipelineDesc& desc);
 
 namespace {
 
@@ -59,6 +61,16 @@ public:
 	std::unique_ptr<ISampler> CreateSampler(const GL::TextureCreationParams&) const override
 	{
 		return {};
+	}
+
+	std::unique_ptr<IBuffer> CreateBuffer(size_t size, const void* data) const override
+	{
+		return CreateMetalBuffer(size, data);
+	}
+
+	std::unique_ptr<IShaderPipeline> CreatePipeline(const PipelineDesc& desc) const override
+	{
+		return CreateMetalShaderPipeline(desc);
 	}
 
 	const LuaGLCapabilities& GetLuaCapabilities() const override

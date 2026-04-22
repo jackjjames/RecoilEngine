@@ -5,6 +5,7 @@
 
 #include "System/EventHandler.h"
 #include "Rendering/GlobalRendering.h"
+#include "Rendering/IRenderBackend.h"
 #include "Rendering/GL/myGL.h"
 #include "Rendering/GL/FBO.h"
 
@@ -110,6 +111,9 @@ void DepthBufferCopy::DestroyTextureAndFBO(bool ms)
 		glDeleteTextures(1, &depthTexture);
 		depthTexture = 0u;
 	}
+
+	depthTextureHandles[ms].reset();
+	depthTextureHandleIds[ms] = 0;
 }
 
 void DepthBufferCopy::CreateTextureAndFBO(bool ms)
@@ -141,6 +145,17 @@ void DepthBufferCopy::CreateTextureAndFBO(bool ms)
 
 	glBindTexture(target, 0);
 	glDisable(target);
+
+	depthTextureHandles[ms] = globalRendering->renderBackend->CreateImportedTexture(
+		target,
+		depthTexture,
+		{globalRendering->viewSizeX, globalRendering->viewSizeY},
+		depthFormat,
+		1,
+		1,
+		false
+	);
+	depthTextureHandleIds[ms] = depthTexture;
 
 	assert(depthFBO == nullptr);
 	depthFBO = std::make_unique<FBO>(true);

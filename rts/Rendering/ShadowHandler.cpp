@@ -14,11 +14,15 @@
 #include "Rendering/Env/Particles/ProjectileDrawer.h"
 #include "Rendering/Units/UnitDrawer.h"
 #include "Rendering/Env/GrassDrawer.h"
+#include "Rendering/IRenderBackend.h"
+#include "Rendering/IRenderTarget.h"
 #include "Rendering/Env/ISky.h"
 #include "Rendering/GL/FBO.h"
 #include "Rendering/GL/myGL.h"
 #include "Rendering/Shaders/ShaderHandler.h"
 #include "Rendering/Shaders/Shader.h"
+#include "Rendering/Textures/ITexture.h"
+#include "Rendering/Textures/TextureCreationParams.hpp"
 #include "Rendering/GL/RenderBuffers.h"
 #include "System/Config/ConfigHandler.h"
 #include "System/EventHandler.h"
@@ -35,6 +39,71 @@ CONFIG(int, ShadowProjectionMode).defaultValue(CShadowHandler::SHADOWPROMODE_CAM
 CONFIG(bool, ShadowColorMode).defaultValue(true).description("Whether the colorbuffer of shadowmap FBO is RGB vs greyscale(to conserve some VRAM)");
 
 CShadowHandler shadowHandler;
+
+namespace {
+
+class ShadowInitRenderTarget final : public IRenderTarget
+{
+public:
+	explicit ShadowInitRenderTarget(FBO& fboRef)
+		: fbo(fboRef)
+	{}
+
+	void Bind() override { fbo.Bind(); }
+	void Unbind() override { fbo.Unbind(); }
+	void ClearColor(const float4& color) override
+	{
+		glClearColor(color.x, color.y, color.z, color.w);
+		glClear(GL_COLOR_BUFFER_BIT);
+	}
+	void ClearDepth(float depth) override
+	{
+		glClearDepth(depth);
+		glClear(GL_DEPTH_BUFFER_BIT);
+	}
+	void SetBlendState(const RenderTargetBlendState& state) override
+	{
+		if (state.enabled) {
+			glEnable(GL_BLEND);
+			glBlendFuncSeparate(state.srcColor, state.dstColor, state.srcAlpha, state.dstAlpha);
+		} else {
+			glDisable(GL_BLEND);
+		}
+	}
+	void SetDepthState(const RenderTargetDepthState& state) override
+	{
+		glDepthMask(state.writeEnabled);
+
+		if (state.testEnabled) {
+			glEnable(GL_DEPTH_TEST);
+			glDepthFunc(state.func);
+		} else {
+			glDisable(GL_DEPTH_TEST);
+		}
+	}
+	void AttachNativeColor(unsigned int) override {}
+	void AttachTexture(GLenum attachment, GLuint texId, GLuint texTarget, int mipLevel = 0, int zSlice = 0) override
+	{
+		fbo.AttachTexture(texId, texTarget, attachment, mipLevel, zSlice);
+	}
+	void AttachRenderBuffer(GLenum attachment, GLuint rboId) override
+	{
+		fbo.AttachRenderBuffer(rboId, attachment);
+	}
+	void Detach(GLenum attachment) override { fbo.Detach(attachment); }
+	bool IsValid() const override { return fbo.IsValid(); }
+	bool IsComplete(const char* name) override { return fbo.CheckStatus(name); }
+	int2 GetSize() const override { return size; }
+	void SetSize(const int2& newSize) override { size = newSize; }
+	void SetDrawBuffers(unsigned int count, const GLenum* attachments) override { glDrawBuffers(count, attachments); }
+	uint32_t GetId() const override { return fbo.GetId(); }
+
+private:
+	FBO& fbo;
+	int2 size = {0, 0};
+};
+
+} // namespace
 
 void CShadowHandler::Reload(const char* argv)
 {
@@ -184,8 +253,8 @@ void CShadowHandler::FreeFBOAndTextures() {
 
 	smOpaqFBO.Kill();
 
-	glDeleteTextures(1, &shadowDepthTexture); shadowDepthTexture = 0;
-	glDeleteTextures(1, &shadowColorTexture); shadowColorTexture = 0;
+	shadowDepthTextureHandle.reset(); shadowDepthTexture = 0;
+	shadowColorTextureHandle.reset(); shadowColorTexture = 0;
 }
 
 
@@ -348,6 +417,19 @@ bool CShadowHandler::InitFBOAndTextures()
 	};
 
 	static constexpr float one[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	const GL::TextureCreationParams texParams {
+		.aniso = 0.0f,
+		.lodBias = 0.0f,
+		.texID = 0,
+		.reqNumLevels = 1,
+		.linearMipMapFilter = false,
+		.linearTextureFilter = true,
+		.wrapMirror = false,
+		.repeatMirror = false,
+		.clampBorder = float4(one[0], one[1], one[2], one[3]),
+	};
+	ShadowInitRenderTarget initTarget(smOpaqFBO);
+	initTarget.SetSize({realShTexSize, realShTexSize});
 
 	bool status = false;
 	for (const auto& preset : presets)
@@ -356,76 +438,73 @@ bool CShadowHandler::InitFBOAndTextures()
 			smOpaqFBO.DetachAll();
 
 		//depth
-		glDeleteTextures(1, &shadowDepthTexture);
-		glGenTextures(1, &shadowDepthTexture);
-		glBindTexture(GL_TEXTURE_2D, shadowDepthTexture);
-
-		glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, one);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, preset.clampMode);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, preset.clampMode);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, preset.filterMode);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, preset.filterMode);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0); //no mips
-
 		const int depthBits = std::min(globalRendering->supportDepthBufferBitDepth, 24);
 		const GLint depthFormat = CGlobalRendering::DepthBitsToFormat(depthBits);
+		auto depthParams = texParams;
+		depthParams.linearTextureFilter = (preset.filterMode == GL_LINEAR);
+		depthParams.minFilter = preset.filterMode;
+		depthParams.magFilter = preset.filterMode;
+		depthParams.wrapModes = std::array<int32_t, 3>{preset.clampMode, preset.clampMode, preset.clampMode};
+		shadowDepthTextureHandle = globalRendering->renderBackend->CreateTexture2D({realShTexSize, realShTexSize}, depthFormat, depthParams, false);
 
+		if (shadowDepthTextureHandle == nullptr || !shadowDepthTextureHandle->IsValid()) {
+			return false;
+		}
+
+		shadowDepthTextureHandle->Bind();
 		glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE);
-		glTexImage2D(GL_TEXTURE_2D, 0, depthFormat, realShTexSize, realShTexSize, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		shadowDepthTextureHandle->Unbind();
+		shadowDepthTexture = shadowDepthTextureHandle->GetNativeId();
 
 		/// color
-		glDeleteTextures(1, &shadowColorTexture);
-		glGenTextures(1, &shadowColorTexture);
-		glBindTexture(GL_TEXTURE_2D, shadowColorTexture);
+		auto colorParams = texParams;
+		colorParams.linearTextureFilter = (preset.filterMode == GL_LINEAR);
+		colorParams.minFilter = preset.filterMode;
+		colorParams.magFilter = preset.filterMode;
+		colorParams.wrapModes = std::array<int32_t, 3>{preset.clampMode, preset.clampMode, preset.clampMode};
 
-		glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, one);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, preset.clampMode);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, preset.clampMode);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, preset.filterMode);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, preset.filterMode);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0); //no mips
-		// TODO: Figure out if mips make sense here.
-
+		uint32_t colorFormat = GL_R8;
 		if (static_cast<bool>(shadowColorMode)) {
-			// seems like GL_RGB8 has enough precision
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, realShTexSize, realShTexSize, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+			colorFormat = GL_RGB8;
+		}
+
+		shadowColorTextureHandle = globalRendering->renderBackend->CreateTexture2D({realShTexSize, realShTexSize}, colorFormat, colorParams, false);
+
+		if (shadowColorTextureHandle == nullptr || !shadowColorTextureHandle->IsValid()) {
+			return false;
+		}
+
+		shadowColorTextureHandle->Bind();
+		if (static_cast<bool>(shadowColorMode)) {
 			static constexpr GLint swizzleMask[] = { GL_RED, GL_GREEN, GL_BLUE, GL_ONE };
 			glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask);
-
-		}
-		else {
-			// Conserve VRAM
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, realShTexSize, realShTexSize, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+		} else {
 			static constexpr GLint swizzleMask[] = { GL_RED, GL_RED, GL_RED, GL_ONE };
 			glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask);
 		}
-		glBindTexture(GL_TEXTURE_2D, 0);
+		shadowColorTextureHandle->Unbind();
+		shadowColorTexture = shadowColorTextureHandle->GetNativeId();
 
 		// Mesa complains about an incomplete FBO if calling Bind before TexImage (?)
-		smOpaqFBO.Bind();
-		smOpaqFBO.AttachTexture(shadowDepthTexture, GL_TEXTURE_2D, GL_DEPTH_ATTACHMENT);
-		smOpaqFBO.AttachTexture(shadowColorTexture, GL_TEXTURE_2D, GL_COLOR_ATTACHMENT0);
+		initTarget.Bind();
+		initTarget.AttachTexture(GL_DEPTH_ATTACHMENT, shadowDepthTexture, GL_TEXTURE_2D);
+		initTarget.AttachTexture(GL_COLOR_ATTACHMENT0, shadowColorTexture, GL_TEXTURE_2D);
 
-		glDrawBuffer(GL_COLOR_ATTACHMENT0);
+		initTarget.SetDrawBuffers(1, std::array<GLenum, 1>{GL_COLOR_ATTACHMENT0}.data());
 		glReadBuffer(GL_COLOR_ATTACHMENT0);
 
 		// test the FBO
-		status = smOpaqFBO.CheckStatus(preset.name);
+		status = initTarget.IsComplete(preset.name);
 
 		if (status) //exit on the first occasion
 			break;
 	}
 
-	glClearDepth(1.0f);
-	glClear(GL_DEPTH_BUFFER_BIT);
+	initTarget.ClearDepth(1.0f);
 	EnableColorOutput(true);
-	glClearColor(1.0f, 1.0f, 1.0f, 0.0f);
-	glClear(GL_COLOR_BUFFER_BIT);
+	initTarget.ClearColor(float4(1.0f, 1.0f, 1.0f, 0.0f));
 
-	smOpaqFBO.Unbind();
+	initTarget.Unbind();
 
 	// revert to FBO = 0 default
 	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);

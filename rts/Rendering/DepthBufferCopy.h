@@ -4,6 +4,8 @@
 #include <array>
 #include <cstdint>
 
+#include "Rendering/Textures/ITexture.h"
+#include "Rendering/Textures/NullTexture.h"
 #include "System/UnorderedSet.hpp"
 #include "System/EventClient.h"
 #include "Rendering/GL/FBO.h"
@@ -30,6 +32,7 @@ public:
 
 	void MakeDepthBufferCopy() const;
 	uint32_t GetDepthBufferTexture(bool ms) const { return depthTextures[ms]; }
+	ITexture& GetDepthBufferTextureHandle(bool ms) const { return (depthTextureHandles[ms] != nullptr) ? *depthTextureHandles[ms] : GetNullTexture(); }
 private:
 	// to be accessed with ScopedDepthBufferCopy
 	void AddConsumer(bool ms);
@@ -44,6 +47,8 @@ private:
 
 	std::array<uint32_t, 2> consumersCount = {};
 	std::array<uint32_t, 2> depthTextures = {};
+	mutable std::array<std::unique_ptr<ITexture>, 2> depthTextureHandles = {};
+	mutable std::array<uint32_t, 2> depthTextureHandleIds = {};
 	std::array<std::unique_ptr<FBO>, 2> depthFBOs = {};
 };
 

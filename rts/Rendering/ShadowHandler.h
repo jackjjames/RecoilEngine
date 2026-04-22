@@ -5,8 +5,10 @@
 
 #include <array>
 #include <limits>
+#include <memory>
 
 #include "Rendering/GL/FBO.h"
+#include "Rendering/Textures/NullTexture.h"
 #include "System/float4.h"
 #include "System/Matrix44f.h"
 
@@ -82,6 +84,8 @@ public:
 
 	uint32_t GetShadowTextureID() const { return shadowDepthTexture; }
 	uint32_t GetColorTextureID() const { return shadowColorTexture; }
+	ITexture& GetShadowTextureHandle() const { return (shadowDepthTextureHandle != nullptr) ? *shadowDepthTextureHandle : GetNullTexture(); }
+	ITexture& GetColorTextureHandle() const { return (shadowColorTextureHandle != nullptr) ? *shadowColorTextureHandle : GetNullTexture(); }
 
 	static bool ShadowsInitialized() { return firstInit; }
 	static bool ShadowsSupported() { return shadowsSupported; }
@@ -138,6 +142,8 @@ private:
 	CMatrix44f projMatrix[2];
 	CMatrix44f viewMatrix[2];
 
+	std::unique_ptr<ITexture> shadowDepthTextureHandle;
+	std::unique_ptr<ITexture> shadowColorTextureHandle;
 	uint32_t shadowDepthTexture;
 	uint32_t shadowColorTexture;
 

@@ -211,10 +211,42 @@ int main(int /*argc*/, char** /*argv*/)
 
 	MetalFrame::EndOffscreen();
 
-	std::printf("metal-smoke: pipeline log = %s\n", pipeline->GetLog().c_str());
-	std::printf("metal-smoke: offscreen draw committed\n");
+	// Pixel readback. BeginOffscreen clears to black and the triangle colour
+	// is white, and the center of the viewport falls inside the triangle
+	// (verify: (0,0) is inside the triangle with vertices (-0.75,-0.75),
+	// (0.75,-0.75), (0,0.75)), so the center texel must come out near-white.
+	//
+	// We can use getBytes directly against the MTLStorageModeShared texture
+	// on Apple Silicon because EndOffscreen called waitUntilCompleted above;
+	// on intel macs this would need a blit synchronize, but the harness is
+	// scoped to Apple Silicon (see MakeOffscreenTarget for why).
+	uint8_t pixel[4] = {0};
+	const NSUInteger cx = kRenderTargetSize / 2;
+	const NSUInteger cy = kRenderTargetSize / 2;
+	[ctx.renderTarget getBytes:pixel
+	               bytesPerRow:sizeof(pixel)
+	                fromRegion:MTLRegionMake2D(cx, cy, 1, 1)
+	               mipmapLevel:0];
+
+	// Format is BGRA8Unorm so pixel[2]=R, pixel[1]=G, pixel[0]=B, pixel[3]=A.
+	const uint8_t r = pixel[2];
+	const uint8_t g = pixel[1];
+	const uint8_t b = pixel[0];
+	const uint8_t a = pixel[3];
+	const uint8_t kNearWhite = 240;
+	const bool ok = (r >= kNearWhite) && (g >= kNearWhite) && (b >= kNearWhite) && (a >= kNearWhite);
+
+	std::printf("metal-smoke: center (%lu,%lu) = R=%u G=%u B=%u A=%u -> %s\n",
+		(unsigned long)cx, (unsigned long)cy,
+		(unsigned)r, (unsigned)g, (unsigned)b, (unsigned)a,
+		ok ? "near-white (OK)" : "NOT near-white (FAIL)");
 
 	Teardown(ctx);
+
+	if (!ok) {
+		std::fputs("metal-smoke: fail\n", stderr);
+		return 2;
+	}
 	std::puts("metal-smoke: ok");
 	return 0;
 }

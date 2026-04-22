@@ -36,6 +36,16 @@ bool VBO::IsSupported() const
  * Returns if the current gpu drivers support certain buffer type
  */
 bool VBO::IsSupported(GLenum target) {
+#if defined(RENDER_BACKEND_METAL)
+	// Legacy VBO wrapper is GL-only; on Metal the real buffer allocation
+	// lives on IBuffer / MetalBuffer. Declare every target unsupported so
+	// VBO::New() / Bind() fall through to the CPU-shadow path (data
+	// vector) and skip the raw glGenBuffers / glBufferData calls.
+	// Buffer-backed subsystems (S3DModelVAO etc.) will be re-plumbed onto
+	// IBuffer per subsystem during Stage 9.
+	(void)target;
+	return false;
+#else
 	static bool isRangeMappingSupported = GLAD_GL_ARB_map_buffer_range;
 	if (!isRangeMappingSupported) //TODO glBufferSubData() fallback ?
 		return false;
@@ -65,6 +75,7 @@ bool VBO::IsSupported(GLenum target) {
 		return false;
 	}
 	}
+#endif
 }
 
 
@@ -505,6 +516,8 @@ void VBO::SetBufferSubData(GLintptr offset, GLsizeiptr size, const void* data)
 	RECOIL_DETAILED_TRACY_ZONE;
 	assert(!mapped);
 	assert((offset + size) <= bufSize);
+	if (!isSupported)
+		return;
 	glBufferSubData(curBoundTarget, offset, size, data);
 }
 
@@ -555,15 +568,33 @@ size_t VBO::GetOffsetAlignment(GLenum target) {
 	RECOIL_DETAILED_TRACY_ZONE;
 
 	const auto getOffsetAlignmentUBO = []() -> size_t {
+#if defined(RENDER_BACKEND_METAL)
+		// Apple Silicon's MTLBuffer guarantees 256-byte alignment for
+		// constant-buffer offsets (MTLRenderCommandEncoder setVertexBuffer:
+		// / setFragmentBuffer: offsets must be a multiple of 256 on GPU
+		// families 3+). Match that here so VBO-sized allocations line up
+		// with what the Metal path will expect once unit draw lands in
+		// Stage 9. Real values can come from MTLDevice minBufferOffsetAlignment
+		// when IRenderBackend exposes capabilities (S9-C*).
+		return 256;
+#else
 		GLint buffAlignment = 0;
 		glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &buffAlignment);
 		return static_cast<size_t>(buffAlignment);
+#endif
 	};
 
 	const auto getOffsetAlignmentSSBO = []() -> size_t {
+#if defined(RENDER_BACKEND_METAL)
+		// No direct SSBO equivalent in Metal; reuse the buffer-offset
+		// alignment. Real consumers will be audited in S9-C4 (unit drawer +
+		// MultiDrawIndirect path).
+		return 256;
+#else
 		GLint buffAlignment = 0;
 		glGetIntegerv(GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT, &buffAlignment);
 		return static_cast<size_t>(buffAlignment);
+#endif
 	};
 
 	static size_t offsetAlignmentUBO  = getOffsetAlignmentUBO();

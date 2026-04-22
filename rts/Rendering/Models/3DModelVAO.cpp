@@ -19,6 +19,14 @@
 void S3DModelVAO::EnableAttribs(bool inst) const
 {
 	RECOIL_DETAILED_TRACY_ZONE;
+#if defined(RENDER_BACKEND_METAL)
+	// Vertex attribute layout on Metal is baked into MTLVertexDescriptor at
+	// pipeline build time (see IShaderPipeline::PipelineDesc); no per-draw
+	// glEnableVertexAttribArray equivalent. Unit drawer re-plumbs this onto
+	// IBuffer + IShaderPipeline in S9-C4.
+	(void)inst;
+	return;
+#endif
 	if (!inst) {
 		for (int i = 0; i <= 5; ++i) {
 			glEnableVertexAttribArray(i);
@@ -46,6 +54,9 @@ void S3DModelVAO::EnableAttribs(bool inst) const
 void S3DModelVAO::DisableAttribs() const
 {
 	RECOIL_DETAILED_TRACY_ZONE;
+#if defined(RENDER_BACKEND_METAL)
+	return;
+#endif
 	for (int i = 0; i <= 6; ++i) {
 		glDisableVertexAttribArray(i);
 		glVertexAttribDivisor(i, 0);

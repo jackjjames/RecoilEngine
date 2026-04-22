@@ -127,10 +127,22 @@ Shader::IProgramObject* CShaderHandler::CreateProgramObject(const std::string& p
 		programObjects[poClass] = ProgramObjMap();
 	}
 
+#if defined(RENDER_BACKEND_METAL)
+	// Metal backend routes shaders through the IShaderPipeline abstraction
+	// rather than the legacy IProgramObject tree; hand each caller its own
+	// NullProgramObject so subsystems that allocate-and-forget (icons atlas,
+	// sky, debug passes, etc.) do not trip the raw glCreateProgram() call.
+	// A fresh instance per caller is important because many subsystems call
+	// AttachShaderObject() onto the returned pointer, and the duplicate-type
+	// assert there is per-object. Real shader translation lands per
+	// subsystem during Stage 9; Lua gl.* program shim lands in S10-C1.
+	po = new Shader::NullProgramObject(poName);
+#else
 	po = new Shader::GLSLProgramObject(poName);
 
 	if (po == Shader::nullProgramObject)
 		LOG_L(L_ERROR, "[SH::%s] hardware does not support creating GLSL program-object \"%s\"", __func__, poName.c_str());
+#endif
 #endif
 	programObjects[poClass][poName] = po;
 	return po;

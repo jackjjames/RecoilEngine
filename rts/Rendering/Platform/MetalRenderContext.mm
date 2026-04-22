@@ -2,6 +2,7 @@
 
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/IRenderTarget.h"
+#include "Rendering/MetalRenderGlobals.h"
 #include "System/Config/ConfigHandler.h"
 #include "System/Log/ILog.h"
 #include "System/Platform/WindowManagerHelper.h"
@@ -104,6 +105,9 @@ public:
 		state->device = (__bridge_retained void*)device;
 		state->commandQueue = (__bridge void*)commandQueue;
 
+		MetalGlobals::SetDevice((__bridge void*)device);
+		MetalGlobals::SetCommandQueue((__bridge void*)commandQueue);
+
 		SDL_SetWindowData(window, metalStateKey, state);
 		return state;
 	}
@@ -126,6 +130,11 @@ public:
 
 		if (auto* state = static_cast<MetalContextState*>(rendering.glContext)) {
 			SDL_SetWindowData(rendering.sdlWindow, metalStateKey, nullptr);
+
+			MetalGlobals::SetCurrentEncoder(nullptr);
+			MetalGlobals::SetCommandQueue(nullptr);
+			MetalGlobals::SetDevice(nullptr);
+			MetalGlobals::ClearBindings();
 
 			if (state->metalView != nullptr)
 				SDL_Metal_DestroyView(state->metalView);

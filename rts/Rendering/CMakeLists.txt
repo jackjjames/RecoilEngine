@@ -162,6 +162,7 @@ if (APPLE AND SPRING_RENDER_BACKEND STREQUAL "metal")
 	list(APPEND sources_engine_Rendering
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalRenderBackend.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalBuffer.mm"
+		"${CMAKE_CURRENT_SOURCE_DIR}/MetalRenderGlobals.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalRenderTarget.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalShaderPipeline.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/MetalPresenter.mm"

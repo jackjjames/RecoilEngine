@@ -70,6 +70,9 @@ if (APPLE)
 		find_library(METAL_LIBRARY Metal REQUIRED)
 		find_library(QUARTZCORE_LIBRARY QuartzCore REQUIRED)
 		list(APPEND engineLibraries ${METAL_LIBRARY} ${QUARTZCORE_LIBRARY})
+
+		include(FetchShaderTranslator)
+		list(APPEND engineLibraries ${SPRING_SHADER_TRANSLATOR_LIBS})
 	endif()
 endif (APPLE)
 

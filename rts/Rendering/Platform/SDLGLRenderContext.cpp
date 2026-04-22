@@ -2,6 +2,8 @@
 
 #include "Rendering/Platform/SDLGLRenderContext.h"
 
+#include "Rendering/IRenderTarget.h"
+#include "Rendering/GL/GLRenderTarget.h"
 #include "Rendering/Platform/IRenderContext.h"
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/GlobalRenderingInfo.h"
@@ -182,6 +184,12 @@ public:
 		SDL_GL_SwapWindow(window);
 	}
 
+	IRenderTarget& GetDefaultRenderTarget(const CGlobalRendering& rendering) const override
+	{
+		defaultRenderTarget->SetSize({rendering.viewSizeX, rendering.viewSizeY});
+		return *defaultRenderTarget;
+	}
+
 	SDL_Window* GetNativeWindow(const CGlobalRendering& rendering) const override
 	{
 		return rendering.sdlWindow;
@@ -191,6 +199,9 @@ public:
 	{
 		return rendering.glContext;
 	}
+
+private:
+	mutable std::unique_ptr<IRenderTarget> defaultRenderTarget = CreateGLDefaultRenderTarget();
 };
 
 } // namespace

@@ -1,6 +1,7 @@
 #include "Rendering/Platform/IRenderContext.h"
 
 #include "Rendering/GlobalRendering.h"
+#include "Rendering/IRenderTarget.h"
 #include "System/Config/ConfigHandler.h"
 #include "System/Log/ILog.h"
 #include "System/Platform/WindowManagerHelper.h"
@@ -14,6 +15,8 @@
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+
+std::unique_ptr<IRenderTarget> CreateMetalDefaultRenderTarget();
 
 namespace {
 
@@ -180,6 +183,12 @@ public:
 		[commandBuffer commit];
 	}
 
+	IRenderTarget& GetDefaultRenderTarget(const CGlobalRendering& rendering) const override
+	{
+		defaultRenderTarget->SetSize({rendering.viewSizeX, rendering.viewSizeY});
+		return *defaultRenderTarget;
+	}
+
 	SDL_Window* GetNativeWindow(const CGlobalRendering& rendering) const override
 	{
 		return rendering.sdlWindow;
@@ -189,6 +198,9 @@ public:
 	{
 		return rendering.glContext;
 	}
+
+private:
+	mutable std::unique_ptr<IRenderTarget> defaultRenderTarget = CreateMetalDefaultRenderTarget();
 };
 
 } // namespace

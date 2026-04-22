@@ -1,6 +1,9 @@
 #include "Rendering/IRenderBackend.h"
 
 #include "Lua/LuaGLCapabilities.h"
+#include "Rendering/IRenderTarget.h"
+#include "Rendering/Platform/IRenderContext.h"
+#include "Rendering/Platform/IPresenter.h"
 
 #include <memory>
 

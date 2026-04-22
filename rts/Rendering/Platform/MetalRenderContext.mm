@@ -111,6 +111,13 @@ public:
 		MetalGlobals::SetLayer((__bridge void*)layer);
 
 		SDL_SetWindowData(window, metalStateKey, state);
+
+		int drawableW = 0;
+		int drawableH = 0;
+		SDL_Metal_GetDrawableSize(window, &drawableW, &drawableH);
+		LOG("[GR::MetalRenderContext] device=\"%s\" drawable=%dx%d pixelFormat=BGRA8Unorm",
+			[[device name] UTF8String], drawableW, drawableH);
+
 		return state;
 	}
 

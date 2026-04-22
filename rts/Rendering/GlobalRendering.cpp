@@ -427,6 +427,7 @@ void CGlobalRendering::MakeCurrentContext(bool clear) const {
 
 void CGlobalRendering::PostInit() {
 #if defined(RENDER_BACKEND_METAL)
+	LOG("[GR::PostInit] metal backend live; skipping GL capability init");
 	UpdateTimer();
 	return;
 #endif

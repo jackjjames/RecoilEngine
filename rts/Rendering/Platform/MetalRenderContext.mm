@@ -108,6 +108,7 @@ public:
 
 		MetalGlobals::SetDevice((__bridge void*)device);
 		MetalGlobals::SetCommandQueue((__bridge void*)commandQueue);
+		MetalGlobals::SetLayer((__bridge void*)layer);
 
 		SDL_SetWindowData(window, metalStateKey, state);
 		return state;
@@ -133,6 +134,7 @@ public:
 			SDL_SetWindowData(rendering.sdlWindow, metalStateKey, nullptr);
 
 			MetalGlobals::SetCurrentEncoder(nullptr);
+			MetalGlobals::SetLayer(nullptr);
 			MetalGlobals::SetCommandQueue(nullptr);
 			MetalGlobals::SetDevice(nullptr);
 			MetalGlobals::ClearBindings();

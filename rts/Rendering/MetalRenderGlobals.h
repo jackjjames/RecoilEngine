@@ -23,6 +23,13 @@ void* GetDevice();
 void SetCommandQueue(void* queue);
 void* GetCommandQueue();
 
+// The swapchain CAMetalLayer published by the engine's MetalRenderContext
+// at window-create time. Null outside of window lifetime. Useful for engine
+// code that needs to query drawable size / pixel format without reaching
+// back to SDL_GetWindowData.
+void SetLayer(void* layer);
+void* GetLayer();
+
 // The active MTLRenderCommandEncoder for the in-flight frame, if any.
 // Nullable outside of BeginFrame/EndFrame.
 void SetCurrentEncoder(void* encoder);

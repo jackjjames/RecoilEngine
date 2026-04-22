@@ -10,6 +10,7 @@ namespace {
 
 void* g_device = nullptr;
 void* g_commandQueue = nullptr;
+void* g_layer = nullptr;
 void* g_currentEncoder = nullptr;
 void* g_currentPipelineState = nullptr;
 void* g_currentDrawable = nullptr;
@@ -24,6 +25,9 @@ void* GetDevice() { return g_device; }
 
 void SetCommandQueue(void* queue) { g_commandQueue = queue; }
 void* GetCommandQueue() { return g_commandQueue; }
+
+void SetLayer(void* layer) { g_layer = layer; }
+void* GetLayer() { return g_layer; }
 
 void SetCurrentEncoder(void* encoder) { g_currentEncoder = encoder; }
 void* GetCurrentEncoder() { return g_currentEncoder; }

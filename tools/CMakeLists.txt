@@ -2,6 +2,10 @@
 add_subdirectory(unitsync)
 add_subdirectory(DemoTool)
 
+if (APPLE AND SPRING_RENDER_BACKEND STREQUAL "metal")
+	add_subdirectory(metal-smoke)
+endif()
+
 if    (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/pr-downloader/CMakeLists.txt")
 	message(FATAL_ERROR "${CMAKE_CURRENT_SOURCE_DIR}/pr-downloader/ is missing, please run\n git submodule update --init --recursive")
 endif ()

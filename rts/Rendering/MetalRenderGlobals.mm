@@ -12,6 +12,8 @@ void* g_device = nullptr;
 void* g_commandQueue = nullptr;
 void* g_currentEncoder = nullptr;
 void* g_currentPipelineState = nullptr;
+void* g_currentDrawable = nullptr;
+void* g_currentCommandBuffer = nullptr;
 
 std::array<BufferBinding, kMaxBindSlots> g_uniformBindings{};
 
@@ -49,5 +51,11 @@ void ClearBindings()
 
 void SetCurrentPipelineState(void* pipelineState) { g_currentPipelineState = pipelineState; }
 void* GetCurrentPipelineState() { return g_currentPipelineState; }
+
+void SetCurrentDrawable(void* drawable) { g_currentDrawable = drawable; }
+void* GetCurrentDrawable() { return g_currentDrawable; }
+
+void SetCurrentCommandBuffer(void* commandBuffer) { g_currentCommandBuffer = commandBuffer; }
+void* GetCurrentCommandBuffer() { return g_currentCommandBuffer; }
 
 } // namespace MetalGlobals

@@ -49,4 +49,12 @@ void ClearBindings();
 void SetCurrentPipelineState(void* pipelineState);
 void* GetCurrentPipelineState();
 
+// The in-flight CAMetalDrawable and MTLCommandBuffer, published by
+// BeginFrame and consumed by EndFrame. Null outside of a frame.
+void SetCurrentDrawable(void* drawable);
+void* GetCurrentDrawable();
+
+void SetCurrentCommandBuffer(void* commandBuffer);
+void* GetCurrentCommandBuffer();
+
 } // namespace MetalGlobals

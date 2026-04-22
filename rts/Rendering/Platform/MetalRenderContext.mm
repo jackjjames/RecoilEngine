@@ -3,6 +3,7 @@
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/IRenderTarget.h"
 #include "Rendering/MetalRenderGlobals.h"
+#include "Rendering/Platform/MetalFrameControl.h"
 #include "System/Config/ConfigHandler.h"
 #include "System/Log/ILog.h"
 #include "System/Platform/WindowManagerHelper.h"
@@ -167,29 +168,7 @@ public:
 
 	void SwapWindow(SDL_Window* window) const override
 	{
-		auto* state = GetMetalState(window);
-		if (state == nullptr)
-			return;
-
-		auto* layer = (__bridge CAMetalLayer*)state->layer;
-		auto* commandQueue = (__bridge id<MTLCommandQueue>)state->commandQueue;
-		UpdateDrawableSize(window, layer);
-
-		id<CAMetalDrawable> drawable = [layer nextDrawable];
-		if (drawable == nil)
-			return;
-
-		MTLRenderPassDescriptor* renderPass = [MTLRenderPassDescriptor renderPassDescriptor];
-		renderPass.colorAttachments[0].texture = drawable.texture;
-		renderPass.colorAttachments[0].loadAction = MTLLoadActionClear;
-		renderPass.colorAttachments[0].storeAction = MTLStoreActionStore;
-		renderPass.colorAttachments[0].clearColor = MTLClearColorMake(1.0, 0.0, 1.0, 1.0);
-
-		id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-		id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPass];
-		[encoder endEncoding];
-		[commandBuffer presentDrawable:drawable];
-		[commandBuffer commit];
+		MetalFrame::End(window);
 	}
 
 	IRenderTarget& GetDefaultRenderTarget(const CGlobalRendering& rendering) const override
@@ -218,3 +197,78 @@ std::unique_ptr<IRenderContext> CreateMetalRenderContext()
 {
 	return std::make_unique<MetalRenderContext>();
 }
+
+namespace MetalFrame {
+
+void Begin(SDL_Window* window)
+{
+	if (window == nullptr)
+		return;
+	auto* state = GetMetalState(window);
+	if (state == nullptr)
+		return;
+
+	auto* layer = (__bridge CAMetalLayer*)state->layer;
+	auto commandQueue = (__bridge id<MTLCommandQueue>)state->commandQueue;
+	if (layer == nil || commandQueue == nil)
+		return;
+
+	UpdateDrawableSize(window, layer);
+
+	id<CAMetalDrawable> drawable = [layer nextDrawable];
+	if (drawable == nil)
+		return;
+
+	// Translation units in this engine are compiled without ARC, so we keep
+	// the drawable/command buffer/encoder alive manually for the duration of
+	// the frame: retain on Begin, release on End. Autorelease-pool churn
+	// would otherwise drop them between the encoder record and the commit.
+	MTLRenderPassDescriptor* renderPass = [MTLRenderPassDescriptor renderPassDescriptor];
+	renderPass.colorAttachments[0].texture = drawable.texture;
+	renderPass.colorAttachments[0].loadAction = MTLLoadActionClear;
+	renderPass.colorAttachments[0].storeAction = MTLStoreActionStore;
+	renderPass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
+
+	id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
+	id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPass];
+
+	[drawable retain];
+	[commandBuffer retain];
+	[encoder retain];
+
+	MetalGlobals::SetCurrentDrawable((__bridge void*)drawable);
+	MetalGlobals::SetCurrentCommandBuffer((__bridge void*)commandBuffer);
+	MetalGlobals::SetCurrentEncoder((__bridge void*)encoder);
+}
+
+void End(SDL_Window* window)
+{
+	(void)window;
+
+	auto encoder       = (__bridge id<MTLRenderCommandEncoder>)MetalGlobals::GetCurrentEncoder();
+	auto commandBuffer = (__bridge id<MTLCommandBuffer>)MetalGlobals::GetCurrentCommandBuffer();
+	auto drawable      = (__bridge id<CAMetalDrawable>)MetalGlobals::GetCurrentDrawable();
+
+	MetalGlobals::SetCurrentEncoder(nullptr);
+	MetalGlobals::SetCurrentCommandBuffer(nullptr);
+	MetalGlobals::SetCurrentDrawable(nullptr);
+	MetalGlobals::SetCurrentPipelineState(nullptr);
+	MetalGlobals::ClearBindings();
+
+	if (encoder != nil) {
+		[encoder endEncoding];
+		[encoder release];
+	}
+
+	if (commandBuffer != nil) {
+		if (drawable != nil)
+			[commandBuffer presentDrawable:drawable];
+		[commandBuffer commit];
+		[commandBuffer release];
+	}
+
+	if (drawable != nil)
+		[drawable release];
+}
+
+} // namespace MetalFrame

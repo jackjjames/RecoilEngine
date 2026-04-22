@@ -764,7 +764,7 @@ CFontTexture::~CFontTexture()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 	CglFontRenderer::DeleteInstance(fontRenderer);
-#ifndef HEADLESS
+#if !defined(HEADLESS) && !defined(RENDER_BACKEND_METAL)
 	glDeleteTextures(1, &glyphAtlasTextureID);
 	glyphAtlasTextureID = 0;
 #endif
@@ -1311,6 +1311,20 @@ void CFontTexture::CreateTexture(const int width, const int height, const bool i
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 #ifndef HEADLESS
+#if defined(RENDER_BACKEND_METAL)
+	// Metal backend has no GL texture path yet; keep CPU atlas allocations so
+	// the rest of the font pipeline still accepts upload calls but skip all
+	// of the glTexImage2D / glTexParameteri wiring. Real Metal atlas texture
+	// lands with the IShaderPipeline-backed text renderer rewrite.
+	if (init) {
+		atlasUpdate = {};
+		atlasUpdate.Alloc(texWidth = wantedTexWidth = width, texHeight = wantedTexHeight = height, needsColor ? 4 : 1);
+
+		atlasUpdateShadow = {};
+		atlasUpdateShadow.Alloc(width, height, needsColor ? 4 : 1);
+	}
+	return;
+#endif
 	if (init)
 		glGenTextures(1, &glyphAtlasTextureID);
 	glBindTexture(GL_TEXTURE_2D, glyphAtlasTextureID);
@@ -1535,6 +1549,14 @@ void CFontTexture::UploadGlyphAtlasTextureImpl()
 		isColor = true;
 		needsTextureUpload = true;
 	}
+
+#if defined(RENDER_BACKEND_METAL)
+	// Metal has no glyph-atlas upload path yet; drop the atlas onto the floor
+	// for now (matched with the CreateTexture bypass above). The S8-C4
+	// follow-up replaces this with an MTLTexture + blit.
+	needsTextureUpload = false;
+	return;
+#endif
 
 	// update texture atlas
 	glBindTexture(GL_TEXTURE_2D, glyphAtlasTextureID);

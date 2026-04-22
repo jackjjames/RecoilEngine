@@ -273,7 +273,12 @@ bool SpringApp::Init()
 	UpdateInterfaceGeometry();
 	InitFonts();
 
+#if !defined(RENDER_BACKEND_METAL)
+	// Metal has no myGL.cpp ClearScreen equivalent yet; presenter handles the
+	// initial clear from its first Draw(). Slot the Metal clear in when the
+	// loading screen path lands.
 	ClearScreen();
+#endif
 
 	if (!InitFileSystem())
 		return false;

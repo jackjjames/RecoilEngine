@@ -21,6 +21,20 @@ void ShowSplashScreen(
 	const std::string& springVersionStr,
 	const std::function<bool()>& testDoneFunc
 ) {
+#if defined(RENDER_BACKEND_METAL)
+	// Metal has no textured-quad / font pipeline through IShaderPipeline yet.
+	// Drop visuals, but keep the event-pump + watchdog loop so async VFS init
+	// (testDoneFunc) can finish. Visuals land with S8-C5.
+	(void)splashScreenFile;
+	(void)springVersionStr;
+	while (!testDoneFunc()) {
+		SDL_Event event;
+		while (SDL_PollEvent(&event)) {}
+		Watchdog::ClearTimer(WDT_MAIN);
+		SDL_Delay(4);
+	}
+	return;
+#endif
 	CBitmap bmp;
 
 	VA_TYPE_2DT quadElems[] = {

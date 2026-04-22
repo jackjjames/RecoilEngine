@@ -414,6 +414,16 @@ std::unique_ptr<CglFontRenderer> CglFontRenderer::CreateInstance()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 #ifndef HEADLESS
+	// Metal does not yet have a native font renderer (follow-up slice will
+	// port the GLSL text pipeline to IShaderPipeline so both backends can
+	// consume the same translated shader); the GL-shader and GL-no-shader
+	// paths below both call into raw GL and segfault on a Metal context.
+	// Returning the null renderer keeps boot alive at the cost of no text
+	// until the real port lands.
+#if defined(RENDER_BACKEND_METAL)
+	return std::make_unique<CglNullFontRenderer>();
+#endif
+
 	//return std::make_unique<CglNoShaderFontRenderer>();
 	if (globalRendering->amdHacks)
 		return std::make_unique<CglNoShaderFontRenderer>();

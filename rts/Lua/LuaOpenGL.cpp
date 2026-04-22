@@ -261,7 +261,12 @@ static CFeature* ParseFeature(lua_State* L, const char* caller, int index)
 
 void LuaOpenGL::Init()
 {
+#if !defined(RENDER_BACKEND_METAL)
+	// Metal backend has no GL context. The wider gl.* shim lands in Stage 10
+	// (S10-C*); for now, skip the GL state pokes so boot stays alive. Lua
+	// widgets that actually invoke gl.* on Metal are still expected to fail.
 	glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
+#endif
 
 	canUseShaders = configHandler->GetBool("LuaShaders");
 
@@ -274,11 +279,13 @@ void LuaOpenGL::Init()
 
 void LuaOpenGL::Free()
 {
+#if !defined(RENDER_BACKEND_METAL)
 	glDisable(GL_VERTEX_PROGRAM_POINT_SIZE);
 
 	for (const OcclusionQuery* q: occlusionQueries) {
 		glDeleteQueries(1, &q->id);
 	}
+#endif
 
 	occlusionQueries.clear();
 }

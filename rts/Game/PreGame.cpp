@@ -188,6 +188,13 @@ bool CPreGame::Draw()
 #ifndef HEADLESS
 	RECOIL_DETAILED_TRACY_ZONE;
 
+#if defined(RENDER_BACKEND_METAL)
+	// Metal has no GL clear + immediate-mode font path yet; let the presenter
+	// own the frame and bail. Real pregame visuals land with S9-C1 (RmlUI
+	// menu) / S10-C4 (gl.* shim).
+	return true;
+#endif
+
 	ClearScreen();
 
 	static constexpr const float4 color = { 1.0f, 1.0f, 1.0f, 1.0f };

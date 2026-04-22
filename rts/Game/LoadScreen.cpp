@@ -310,9 +310,15 @@ bool CLoadScreen::Draw()
 
 	if (luaIntro != nullptr) {
 		luaIntro->Update();
+#if !defined(RENDER_BACKEND_METAL)
+		// Metal has no GL clear + gl.* widget pipeline yet; let the presenter
+		// own the frame. LoadScreen widgets still get updated so their state
+		// machines stay alive. Real Metal loading visuals land with S8-C5 +
+		// S10-C* (gl.* shim).
 		luaIntro->DrawGenesis();
 		ClearScreen();
 		luaIntro->DrawLoadScreen();
+#endif
 	}
 
 	if (!mtLoading)

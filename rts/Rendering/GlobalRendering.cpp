@@ -428,6 +428,18 @@ void CGlobalRendering::MakeCurrentContext(bool clear) const {
 void CGlobalRendering::PostInit() {
 #if defined(RENDER_BACKEND_METAL)
 	LOG("[GR::PostInit] metal backend live; skipping GL capability init");
+	// Populate globalRenderingInfo with non-null strings so Lua consumers
+	// (LuaConstPlatform) and logging call sites don't dereference nullptr.
+	// The real Metal-backed values land when the shader translator + IRenderContext
+	// gain introspection hooks (Stage 10+).
+	globalRenderingInfo.gpuName     = "Apple Silicon (Metal)";
+	globalRenderingInfo.gpuVendor   = "Apple";
+	globalRenderingInfo.glVersion   = "Metal";
+	globalRenderingInfo.glVendor    = "Apple";
+	globalRenderingInfo.glRenderer  = "Metal";
+	globalRenderingInfo.glslVersion = "Metal MSL";
+	globalRenderingInfo.gladVersion = "n/a (Metal)";
+	globalRenderingInfo.sdlDriverName = "metal";
 	UpdateTimer();
 	return;
 #endif

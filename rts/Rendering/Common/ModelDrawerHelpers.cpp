@@ -46,7 +46,7 @@ void CModelDrawerHelper::EnableTexturesCommon()
 
 	if (shadowHandler.ShadowsLoaded()) {
 		shadowHandler.SetupShadowTexSampler(GL_TEXTURE2, true);
-		glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, shadowHandler.GetColorTextureID());
+		shadowHandler.GetColorTextureHandle().Bind(3);
 	}
 
 	glActiveTexture(GL_TEXTURE4);

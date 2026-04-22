@@ -1500,8 +1500,7 @@ bool CGame::Draw() {
 		worldDrawer.GenerateIBLTextures();
 
 		// restore back to the default FBO / Viewport
-		if (FBO::IsSupported())
-			FBO::Unbind();
+		globalRendering->renderBackend->GetRenderContext().GetDefaultRenderTarget(*globalRendering).Bind();
 		camera->LoadViewport();
 
 		worldDrawer.Draw();
@@ -1528,7 +1527,11 @@ bool CGame::Draw() {
 		eventHandler.DrawScreenPost();
 	}
 
-	glEnable(GL_DEPTH_TEST);
+	globalRendering->renderBackend->GetRenderContext().GetDefaultRenderTarget(*globalRendering).SetDepthState({
+		.testEnabled = true,
+		.writeEnabled = true,
+		.func = GL_LEQUAL,
+	});
 	glLoadIdentity();
 
 	if (videoCapturing->AllowRecord()) {

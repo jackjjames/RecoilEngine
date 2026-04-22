@@ -8,6 +8,8 @@
 #include "Rendering/GL/myGL.h"
 
 #include "WorldDrawer.h"
+#include "Rendering/IRenderTarget.h"
+#include "Rendering/GL/RenderBuffers.h"
 #include "Sim/Units/UnitDefHandler.h"
 #include "Sim/Features/FeatureDefHandler.h"
 #include "Sim/Weapons/WeaponDefHandler.h"
@@ -20,6 +22,7 @@
 #include "Rendering/Env/MapRendering.h"
 #include "Rendering/Env/IWater.h"
 #include "Rendering/CommandDrawer.h"
+#include "Rendering/Debug/TrianglePass.h"
 #include "Rendering/DebugColVolDrawer.h"
 #include "Rendering/DebugVisibilityDrawer.h"
 #include "Rendering/LineDrawer.h"
@@ -58,6 +61,57 @@
 #include "System/LoadLock.h"
 
 CONFIG(bool, PreloadModels).defaultValue(true).description("The engine will preload all models");
+
+namespace {
+
+IRenderTarget& GetBackbuffer()
+{
+	return globalRendering->renderBackend->GetRenderContext().GetDefaultRenderTarget(*globalRendering);
+}
+
+RenderTargetBlendState GetAlphaBlendState()
+{
+	return RenderTargetBlendState {
+		.enabled = true,
+		.srcColor = GL_SRC_ALPHA,
+		.dstColor = GL_ONE_MINUS_SRC_ALPHA,
+		.srcAlpha = GL_SRC_ALPHA,
+		.dstAlpha = GL_ONE_MINUS_SRC_ALPHA,
+	};
+}
+
+RenderTargetDepthState GetWorldDepthState()
+{
+	return RenderTargetDepthState {
+		.testEnabled = true,
+		.writeEnabled = true,
+		.func = GL_LEQUAL,
+	};
+}
+
+RenderTargetDepthState GetOverlayDepthState()
+{
+	return RenderTargetDepthState {
+		.testEnabled = false,
+		.writeEnabled = false,
+		.func = GL_LEQUAL,
+	};
+}
+
+void DrawColoredQuadTriangles(const VA_TYPE_C& tl, const VA_TYPE_C& tr, const VA_TYPE_C& br, const VA_TYPE_C& bl)
+{
+	auto& rb = RenderBuffer::GetTypedRenderBuffer<VA_TYPE_C>();
+	rb.AssertSubmission();
+
+	auto& shader = rb.GetShader();
+	rb.AddQuadTriangles(tl, tr, br, bl);
+
+	shader.Enable();
+	rb.DrawElements(GL_TRIANGLES);
+	shader.Disable();
+}
+
+} // namespace
 
 void CWorldDrawer::InitPre() const
 {
@@ -293,9 +347,9 @@ void CWorldDrawer::ResetMVPMatrices() const
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
-	glEnable(GL_BLEND);
-	glDisable(GL_DEPTH_TEST);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	auto& backbuffer = GetBackbuffer();
+	backbuffer.SetBlendState(GetAlphaBlendState());
+	backbuffer.SetDepthState(GetOverlayDepthState());
 }
 
 
@@ -306,15 +360,16 @@ void CWorldDrawer::Draw() const
 	SCOPED_GL_DEBUGGROUP("Draw::World");
 
 	const auto& sky = ISky::GetSky();
-	glClearColor(sky->fogColor.x, sky->fogColor.y, sky->fogColor.z, 0.0f);
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-
-	glDepthMask(GL_TRUE);
-	glEnable(GL_DEPTH_TEST);
-	glDisable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	auto& backbuffer = GetBackbuffer();
+	backbuffer.Bind();
+	backbuffer.ClearColor(float4(sky->fogColor.x, sky->fogColor.y, sky->fogColor.z, 0.0f));
+	backbuffer.ClearDepth(1.0f);
+	glClear(GL_STENCIL_BUFFER_BIT);
+	backbuffer.SetDepthState(GetWorldDepthState());
+	backbuffer.SetBlendState({});
 
 	camera->Update();
+	trianglePass.Draw();
 
 	DrawOpaqueObjects();
 	DrawAlphaObjects();
@@ -390,8 +445,8 @@ void CWorldDrawer::DrawOpaqueObjects() const
 void CWorldDrawer::DrawAlphaObjects() const
 {
 	// transparent objects
-	glEnable(GL_BLEND);
-	glDepthFunc(GL_LEQUAL);
+	GetBackbuffer().SetBlendState(GetAlphaBlendState());
+	GetBackbuffer().SetDepthState(GetWorldDepthState());
 
 	static const double belowPlaneEq[4] = {0.0f, -1.0f, 0.0f, 0.0f};
 	static const double abovePlaneEq[4] = {0.0f,  1.0f, 0.0f, 0.0f};
@@ -504,66 +559,60 @@ void CWorldDrawer::DrawBelowWaterOverlay() const
 		return;
 
 	{
-		glEnableClientState(GL_VERTEX_ARRAY);
-
 		const float3& cpos = camera->GetPos();
 		const float vr = camera->GetFarPlaneDist() * 0.5f;
+		const SColor surfaceColor(0.0f, 0.5f, 0.3f, 0.50f);
+		const SColor wallColor(0.0f, 0.5f, 0.3f, 0.50f);
 
-		glDepthMask(GL_FALSE);
-		glDisable(GL_TEXTURE_2D);
-		glColor4f(0.0f, 0.5f, 0.3f, 0.50f);
+		GetBackbuffer().SetBlendState(GetAlphaBlendState());
+		GetBackbuffer().SetDepthState(GetOverlayDepthState());
 
 		{
-			const float3 verts[] = {
-				float3(cpos.x - vr, 0.0f, cpos.z - vr),
-				float3(cpos.x - vr, 0.0f, cpos.z + vr),
-				float3(cpos.x + vr, 0.0f, cpos.z + vr),
-				float3(cpos.x + vr, 0.0f, cpos.z - vr)
-			};
-
-			glVertexPointer(3, GL_FLOAT, 0, verts);
-			glDrawArrays(GL_QUADS, 0, 4);
+			DrawColoredQuadTriangles(
+				{{cpos.x - vr, 0.0f, cpos.z - vr}, surfaceColor},
+				{{cpos.x + vr, 0.0f, cpos.z - vr}, surfaceColor},
+				{{cpos.x + vr, 0.0f, cpos.z + vr}, surfaceColor},
+				{{cpos.x - vr, 0.0f, cpos.z + vr}, surfaceColor}
+			);
 		}
 
 		{
-			const float3 verts[] = {
-				float3(cpos.x - vr, 0.0f, cpos.z - vr),
-				float3(cpos.x - vr,  -vr, cpos.z - vr),
-				float3(cpos.x - vr, 0.0f, cpos.z + vr),
-				float3(cpos.x - vr,  -vr, cpos.z + vr),
-				float3(cpos.x + vr, 0.0f, cpos.z + vr),
-				float3(cpos.x + vr,  -vr, cpos.z + vr),
-				float3(cpos.x + vr, 0.0f, cpos.z - vr),
-				float3(cpos.x + vr,  -vr, cpos.z - vr),
-				float3(cpos.x - vr, 0.0f, cpos.z - vr),
-				float3(cpos.x - vr,  -vr, cpos.z - vr),
-			};
-
-			glVertexPointer(3, GL_FLOAT, 0, verts);
-			glDrawArrays(GL_QUAD_STRIP, 0, 10);
+			DrawColoredQuadTriangles(
+				{{cpos.x - vr, 0.0f, cpos.z - vr}, wallColor},
+				{{cpos.x + vr, 0.0f, cpos.z - vr}, wallColor},
+				{{cpos.x + vr, -vr, cpos.z - vr}, wallColor},
+				{{cpos.x - vr, -vr, cpos.z - vr}, wallColor}
+			);
+			DrawColoredQuadTriangles(
+				{{cpos.x + vr, 0.0f, cpos.z - vr}, wallColor},
+				{{cpos.x + vr, 0.0f, cpos.z + vr}, wallColor},
+				{{cpos.x + vr, -vr, cpos.z + vr}, wallColor},
+				{{cpos.x + vr, -vr, cpos.z - vr}, wallColor}
+			);
+			DrawColoredQuadTriangles(
+				{{cpos.x + vr, 0.0f, cpos.z + vr}, wallColor},
+				{{cpos.x - vr, 0.0f, cpos.z + vr}, wallColor},
+				{{cpos.x - vr, -vr, cpos.z + vr}, wallColor},
+				{{cpos.x + vr, -vr, cpos.z + vr}, wallColor}
+			);
+			DrawColoredQuadTriangles(
+				{{cpos.x - vr, 0.0f, cpos.z + vr}, wallColor},
+				{{cpos.x - vr, 0.0f, cpos.z - vr}, wallColor},
+				{{cpos.x - vr, -vr, cpos.z - vr}, wallColor},
+				{{cpos.x - vr, -vr, cpos.z + vr}, wallColor}
+			);
 		}
-
-		glDepthMask(GL_TRUE);
-		glDisableClientState(GL_VERTEX_ARRAY);
 	}
 
 	{
 		// draw water-coloration quad in raw screenspace
 		ResetMVPMatrices();
 
-		glEnableClientState(GL_VERTEX_ARRAY);
-		glDisable(GL_TEXTURE_2D);
-		glColor4f(0.0f, 0.2f, 0.8f, 0.333f);
-
-		const float3 verts[] = {
-			float3(0.0f, 0.0f, -1.0f),
-			float3(1.0f, 0.0f, -1.0f),
-			float3(1.0f, 1.0f, -1.0f),
-			float3(0.0f, 1.0f, -1.0f),
-		};
-
-		glVertexPointer(3, GL_FLOAT, 0, verts);
-		glDrawArrays(GL_QUADS, 0, 4);
-		glDisableClientState(GL_VERTEX_ARRAY);
+		DrawColoredQuadTriangles(
+			{{0.0f, 0.0f, -1.0f}, SColor(0.0f, 0.2f, 0.8f, 0.333f)},
+			{{1.0f, 0.0f, -1.0f}, SColor(0.0f, 0.2f, 0.8f, 0.333f)},
+			{{1.0f, 1.0f, -1.0f}, SColor(0.0f, 0.2f, 0.8f, 0.333f)},
+			{{0.0f, 1.0f, -1.0f}, SColor(0.0f, 0.2f, 0.8f, 0.333f)}
+		);
 	}
 }

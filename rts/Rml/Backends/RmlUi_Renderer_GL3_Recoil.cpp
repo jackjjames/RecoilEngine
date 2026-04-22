@@ -1810,7 +1810,9 @@ Shader::IProgramObject* RenderInterface_GL3_Recoil::UseProgram(ProgramId program
 
 int RenderInterface_GL3_Recoil::GetUniformLocation(const char* name) const
 {
-	return glGetUniformLocation(program_data->programs[active_program_id]->GetObjID(), name);
+	auto* glProgram = dynamic_cast<GLShaderPipeline*>(program_data->programs[active_program_id]);
+	assert(glProgram != nullptr);
+	return glGetUniformLocation(glProgram->GetObjID(), name);
 }
 
 void RenderInterface_GL3_Recoil::SubmitTransformUniform(Rml::Vector2f translation)

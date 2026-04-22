@@ -17,6 +17,9 @@
 #include "Rendering/Fonts/glFont.h"
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/Textures/NamedTextures.h"
+#if defined(RENDER_BACKEND_METAL)
+#include "Rendering/MetalSplashRenderer.h"
+#endif
 #include "Sim/Misc/TeamHandler.h"
 #include "Sim/Path/IPathManager.h"
 #include "System/Config/ConfigHandler.h"
@@ -339,12 +342,14 @@ bool CLoadScreen::Draw()
 #if defined(RENDER_BACKEND_METAL)
 		// On GL the inline ClearScreen() above acts as the frame body and
 		// SwapBuffers presents it. On Metal we have no active drawable until
-		// BeginFrame is called, so SwapBuffers alone would commit nothing and
-		// the window stays black. Drive the presenter explicitly so each
-		// SetLoadMessage tick produces a committed, presented Metal frame
-		// (black clear for now). Textured quad + load progress text land
-		// with the next S8-C5 sub-slice.
+		// BeginFrame is called, so SwapBuffers alone would commit nothing.
+		// Lazy-init a MetalSplashRenderer on the first draw and reuse it
+		// for every load-screen frame so the window shows a tile/image
+		// instead of a black surface during the multi-minute load.
+		// Text / progress overlay lands with the CglFont Metal backend.
+		static MetalSplashRenderer loadTile;
 		globalRendering->BeginFrame();
+		loadTile.Draw();
 		globalRendering->PresentFrame(true, true);
 #else
 		globalRendering->SwapBuffers(true, false);

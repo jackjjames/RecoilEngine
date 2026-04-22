@@ -7,6 +7,7 @@
 #include "Rendering/IRenderTarget.h"
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/GL/FBO.h"
+#include "Rendering/GL/GLBuffer.h"
 #include "Rendering/GL/GLRenderTarget.h"
 #include "Rendering/Platform/GLPresenter.h"
 #include "Rendering/Platform/SDLGLRenderContext.h"
@@ -83,6 +84,11 @@ public:
 	std::unique_ptr<ISampler> CreateSampler(const GL::TextureCreationParams& params) const override
 	{
 		return CreateGLSampler(params);
+	}
+
+	std::unique_ptr<IBuffer> CreateBuffer(size_t size, const void* data) const override
+	{
+		return CreateGLBuffer(size, data);
 	}
 
 	const LuaGLCapabilities& GetLuaCapabilities() const override

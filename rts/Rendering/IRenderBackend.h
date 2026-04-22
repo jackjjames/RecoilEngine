@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "Rendering/IBuffer.h"
 #include "Rendering/Platform/IRenderContext.h"
 #include "Rendering/Platform/IPresenter.h"
 #include "System/type2.h"
@@ -33,5 +34,6 @@ public:
 	virtual std::unique_ptr<ITexture> CreateTexture2DArray(const int2& size, uint32_t numPages, uint32_t internalFormat, const GL::TextureCreationParams& params, bool wantCompress = true) const = 0;
 	virtual std::unique_ptr<ITexture> CreateImportedTexture(uint32_t texTarget, uint32_t textureId, const int2& size, uint32_t internalFormat, int32_t numLevels, uint32_t numPages = 1, bool takeOwnership = true) const = 0;
 	virtual std::unique_ptr<ISampler> CreateSampler(const GL::TextureCreationParams& params) const = 0;
+	virtual std::unique_ptr<IBuffer> CreateBuffer(size_t size, const void* data = nullptr) const = 0;
 	virtual const LuaGLCapabilities& GetLuaCapabilities() const = 0;
 };

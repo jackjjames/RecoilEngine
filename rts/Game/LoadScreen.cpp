@@ -143,8 +143,22 @@ bool CLoadScreen::Init()
 		return true;
 
 	LOG("[LoadScreen::%s] single-threaded", __func__);
+#if defined(RENDER_BACKEND_METAL)
+	// Single-threaded load on mac blocks the main thread for minutes (full
+	// model preload + LuaDefs), and the Metal loadscreen does not yet redraw
+	// so Watchdog::ClearTimer(WDT_MAIN) is not naturally ticked. Deregister
+	// the main-thread watchdog for the duration of the load; it is
+	// re-registered once the game enters its normal update loop.
+	// Revisit when S8-C5c lands (Metal loadscreen) -- we should tick the
+	// watchdog from there instead.
+	Watchdog::DeregisterThread(WDT_MAIN);
+	game->Load(mapFileName);
+	Watchdog::RegisterThread(WDT_MAIN, true);
+	return false;
+#else
 	game->Load(mapFileName);
 	return false;
+#endif
 }
 
 void CLoadScreen::Kill()

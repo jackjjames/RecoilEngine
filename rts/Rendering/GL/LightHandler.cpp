@@ -14,6 +14,18 @@
 static constexpr float4 ZeroVector4;
 
 void GL::LightHandler::Init(unsigned int cfgBaseLight, unsigned int cfgMaxLights) {
+#if defined(RENDER_BACKEND_METAL)
+	// Fixed-function GL_LIGHTN state has no direct Metal counterpart; the
+	// real lighting path is shader-based and lands with S9-C5 (shadows +
+	// deferred). For now keep the CPU-side light table empty so consumers
+	// that iterate `lights` do nothing.
+	(void)cfgBaseLight;
+	(void)cfgMaxLights;
+	maxLights = 0;
+	baseLight = 0;
+	return;
+#endif
+
 	glGetIntegerv(GL_MAX_LIGHTS, reinterpret_cast<int*>(&maxLights));
 
 	baseLight = cfgBaseLight;

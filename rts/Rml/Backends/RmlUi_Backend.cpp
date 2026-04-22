@@ -117,6 +117,14 @@ bool RmlInitialized()
 
 bool RmlGui::Initialize()
 {
+#if defined(RENDER_BACKEND_METAL)
+	// RmlUi renders through the GL3 backend today; Metal support comes in
+	// S9-C1 via a new IRenderBackend-backed Rml::RenderInterface. Skip init
+	// so CGame::Load completes; gl.* widget shim (S10) + RmlUI (S9-C1) both
+	// need this to be revisited.
+	LOG_L(L_INFO, "[RmlUi::%s] RmlUi skipped on Metal backend; lands with S9-C1", __func__);
+	return false;
+#endif
 	LOG_L(L_INFO, "[RmlUi::%s] Beginning RmlUi Initialization", __func__);
 	state = Rml::MakeUnique<BackendState>();
 

@@ -823,10 +823,23 @@ void CGame::LoadInterface()
 		wordCompletion.Filter();
 	}
 
+#if defined(RENDER_BACKEND_METAL)
+	// Game HUD + chrome (tooltip, guihandler, minimap, resource bar) all
+	// spin up shader programs + FBOs + textures in their constructors. Same
+	// Stage 9/10 story as WorldDrawer -- leave the pointers null on Metal
+	// so the game loop can fall through into LuaRules / LuaUI, which is
+	// where the interesting BAR widget behaviour lives. Real implementations
+	// land with the UI/chrome port (S10-C*).
+	tooltip = nullptr;
+	guihandler = nullptr;
+	minimap = nullptr;
+	resourceBar = nullptr;
+#else
 	tooltip = new CTooltipConsole();
 	guihandler = new CGuiHandler();
 	minimap = new CMiniMap();
 	resourceBar = new CResourceBar();
+#endif
 	selectionKeys.Init();
 
 	uiGroupHandlers.clear();

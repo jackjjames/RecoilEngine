@@ -115,6 +115,19 @@ void DrawColoredQuadTriangles(const VA_TYPE_C& tl, const VA_TYPE_C& tr, const VA
 
 void CWorldDrawer::InitPre() const
 {
+#if defined(RENDER_BACKEND_METAL)
+	// The GPU-facing pieces below (cube-map textures, fixed-function
+	// GL_LIGHTs, shader programs, FBOs) are Stage 9 work. But the model
+	// loader + LuaObjectDrawer are CPU-side (model geometry parsing,
+	// bounding radii) and Lua scripts dereference UnitDef::radius during
+	// CGame::Load, so they stay live on Metal. Texture handlers + sky +
+	// feature drawer are deferred.
+	LuaObjectDrawer::Init();
+	CColorMap::InitStatic();
+	S3DModelVAO::Init();
+	modelLoader.Init();
+	return;
+#else
 	LuaObjectDrawer::Init();
 
 	CColorMap::InitStatic();
@@ -134,10 +147,18 @@ void CWorldDrawer::InitPre() const
 	sunLighting->Init();
 
 	CFeatureDrawer::InitStatic();
+#endif
 }
 
 void CWorldDrawer::InitPost() const
 {
+#if defined(RENDER_BACKEND_METAL)
+	// See InitPre for the gating rationale. Each of these subsystems creates
+	// raw GL objects. The shadow handler, info-texture handler, ground
+	// decal / grass / water / sky / projectile / unit / feature drawers
+	// all land incrementally as Stage 9 commits.
+	return;
+#endif
 	char buf[512] = {0};
 
 	CModelsLock::SetThreadSafety(true);

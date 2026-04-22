@@ -173,8 +173,10 @@ unsigned int CS3OTextureHandler::LoadAndCacheTexture(
 	if (!preloadCall)
 		texture = bitmap->CreateMipMapTextureHandle();
 	const unsigned int texID = (texture != nullptr) ? texture->GetNativeId() : 0;
+#if !defined(RENDER_BACKEND_METAL)
 #ifndef HEADLESS
 	assert(preloadCall || texID > 0);
+#endif
 #endif
 
 	if (textureIt != textureCache.end() && texID > 0) {
@@ -183,8 +185,10 @@ unsigned int CS3OTextureHandler::LoadAndCacheTexture(
 	}
 	else {
 		//save main params from the preloadCall pass, such that data is stored correctly for Reload()
+#if !defined(RENDER_BACKEND_METAL)
 #ifndef HEADLESS //?
 		assert( preloadCall);
+#endif
 #endif
 		textureCache[textureName] = {
 			std::move(texture),
@@ -221,7 +225,9 @@ unsigned int CS3OTextureHandler::InsertTextureMat(const S3DModel* model)
 	texMat.tex2SizeX = tex2.xsize;
 	texMat.tex2SizeY = tex2.ysize;
 
-	textureTable[TEX_MAT_UID(texMat.tex1->GetNativeId(), texMat.tex2->GetNativeId())] = texMat.num;
+	const uint32_t tex1Id = (texMat.tex1 != nullptr) ? texMat.tex1->GetNativeId() : 0;
+	const uint32_t tex2Id = (texMat.tex2 != nullptr) ? texMat.tex2->GetNativeId() : 0;
+	textureTable[TEX_MAT_UID(tex1Id, tex2Id)] = texMat.num;
 
 	return texMat.num;
 }

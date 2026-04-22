@@ -45,6 +45,13 @@ bool CubeMapHandler::Init() {
 	mapSkyReflections = (!mapInfo->smf.skyReflectModTexName.empty());
 	generateMipMaps = configHandler->GetBool("CubeTexGenerateMipMaps");
 
+#if defined(RENDER_BACKEND_METAL)
+	// Cubemap-backed reflections + specular IBL are Stage 9 shadow/env work
+	// (S9-C5). Leave texture ids at 0 so consumers (water, unit drawer)
+	// fall back to whatever sentinel path they already use.
+	return true;
+#endif
+
 	{
 		glGenTextures(1, &specularTexID);
 		glBindTexture(GL_TEXTURE_CUBE_MAP, specularTexID);

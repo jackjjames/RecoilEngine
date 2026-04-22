@@ -103,6 +103,14 @@ CSMFReadMap::CSMFReadMap(const std::string& mapName): CEventClient("[CSMFReadMap
 	{
 		auto lock = CLoadLock::GetUniqueLock();
 
+#if defined(RENDER_BACKEND_METAL)
+		// Metal map renderer lands with S9-C3. Until it does the raw
+		// glGenTextures / glCompressedTexImage2DARB / shadingFBO setup here
+		// is a hard crash on APPLE. Skip the texture + FBO block so CGame::Load
+		// can continue; texture handle getters (GetMiniMapTextureHandle etc)
+		// already fall back to the null-texture path when the underlying
+		// MapTexture has id 0.
+#else
 		LoadMinimap();
 
 		CreateSpecularTex();
@@ -113,6 +121,7 @@ CSMFReadMap::CSMFReadMap(const std::string& mapName): CEventClient("[CSMFReadMap
 		CreateNormalTex();
 		CreateHeightMapTex();
 		CreateShadingGL();
+#endif
 	}
 
 	mapFile.ReadFeatureInfo();

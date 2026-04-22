@@ -1787,6 +1787,17 @@ static void HandleDDSMipmap(GLenum target, int32_t numEmbeddedLevels, uint32_t m
 std::unique_ptr<ITexture> CBitmap::CreateDDSTextureHandle(const GL::TextureCreationParams& tcp) const
 {
 	RECOIL_DETAILED_TRACY_ZONE;
+#if defined(RENDER_BACKEND_METAL)
+	// DDS/DXT compressed-texture upload depends on GL's
+	// glCompressedTexImage2D path + nv_dds::upload_texture2D. Porting the
+	// compressed format handling to Metal (MTLPixelFormatBC1/3_RGBA +
+	// replaceRegion with bytesPerRow from a block-compressed layout) is
+	// part of the texture + unit-texture handler port (S9-C4). Until then,
+	// return a null ITexture so S3O/feature model textures silently fall
+	// back to the null texture path.
+	(void)tcp;
+	return nullptr;
+#endif
 	glPushAttrib(GL_TEXTURE_BIT);
 
 	auto texID = tcp.texID;

@@ -1,6 +1,9 @@
 /* This file is part of the Spring engine (GPL v2 or later), see LICENSE.html */
 
+#include "Rendering/IBuffer.h"
+#include "Rendering/MetalResources.h"
 #include "Rendering/Shaders/IShaderPipeline.h"
+#include "Rendering/Textures/ITexture.h"
 
 #include "Rendering/MetalRenderGlobals.h"
 #include "Rendering/ShaderTranslator.h"
@@ -17,6 +20,17 @@ namespace {
 // runtime. Both stages get that name; we mint fresh MTLFunction handles from
 // the per-stage MTLLibrary.
 static NSString* const kEntryPointName = @"main0";
+
+MTLVertexFormat ToMtlVertexFormat(VertexFormat fmt)
+{
+	switch (fmt) {
+		case VertexFormat::Float1: return MTLVertexFormatFloat;
+		case VertexFormat::Float2: return MTLVertexFormatFloat2;
+		case VertexFormat::Float3: return MTLVertexFormatFloat3;
+		case VertexFormat::Float4: return MTLVertexFormatFloat4;
+	}
+	return MTLVertexFormatFloat4;
+}
 
 bool CompileStage(id<MTLDevice> device, Shader::Stage stage, const std::string& glsl,
                   id<MTLLibrary>* libOut, id<MTLFunction>* fnOut, std::string& log)
@@ -104,6 +118,29 @@ public:
 		// to describe that through PipelineDesc.
 		pipelineDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
 
+		// Build an MTLVertexDescriptor when the caller described a vertex
+		// layout. Empty layout (no attributes + no bindings) leaves
+		// pipelineDesc.vertexDescriptor as nil, which is the right thing
+		// for vertex-less procedural passes (see TrianglePass).
+		if (!desc.vertexAttributes.empty()) {
+			MTLVertexDescriptor* vtxDesc = [MTLVertexDescriptor new];
+
+			for (const auto& attr : desc.vertexAttributes) {
+				const uint32_t mtlBufferIdx = desc.metalVertexBufferBaseSlot + attr.bufferSlot;
+				vtxDesc.attributes[attr.location].format      = ToMtlVertexFormat(attr.format);
+				vtxDesc.attributes[attr.location].offset      = attr.offset;
+				vtxDesc.attributes[attr.location].bufferIndex = mtlBufferIdx;
+			}
+			for (const auto& binding : desc.vertexBindings) {
+				const uint32_t mtlBufferIdx = desc.metalVertexBufferBaseSlot + binding.slot;
+				vtxDesc.layouts[mtlBufferIdx].stride       = binding.stride;
+				vtxDesc.layouts[mtlBufferIdx].stepRate     = 1;
+				vtxDesc.layouts[mtlBufferIdx].stepFunction = MTLVertexStepFunctionPerVertex;
+			}
+
+			pipelineDesc.vertexDescriptor = vtxDesc;
+		}
+
 		NSError* err = nil;
 		pipelineState = [device newRenderPipelineStateWithDescriptor:pipelineDesc error:&err];
 		if (pipelineState == nil) {
@@ -144,6 +181,27 @@ public:
 	const std::string& GetLog() const override { return log; }
 	bool IsValid() const override { return valid; }
 
+	void BindVertexBuffer(uint32_t slot, const IBuffer& buffer, size_t offset) override
+	{
+		void* mtlBuffer = MetalResources::GetMtlBuffer(buffer);
+		if (mtlBuffer == nullptr)
+			return;
+
+		MetalGlobals::BufferBinding binding;
+		binding.mtlBuffer = mtlBuffer;
+		binding.offset    = offset;
+		binding.size      = buffer.GetSize() - offset;
+		MetalGlobals::SetVertexBufferBinding(slot, binding);
+	}
+
+	void BindTexture(uint32_t slot, ITexture& texture) override
+	{
+		MetalGlobals::TextureBinding binding;
+		binding.mtlTexture = MetalResources::GetMtlTexture(texture);
+		binding.mtlSampler = MetalResources::GetMtlSampler(texture);
+		MetalGlobals::SetTextureBinding(slot, binding);
+	}
+
 	void Draw(PrimitiveTopology topology, uint32_t firstVertex, uint32_t vertexCount) override
 	{
 		if (!valid || vertexCount == 0)
@@ -153,12 +211,63 @@ public:
 		if (encoder == nil)
 			return;
 
+		ApplyBindings(encoder);
+
+		[encoder drawPrimitives:ToMtlPrimitive(topology) vertexStart:firstVertex vertexCount:vertexCount];
+	}
+
+	void DrawIndexed(PrimitiveTopology topology, uint32_t indexCount, IndexType indexType,
+	                 const IBuffer& indexBuffer, size_t indexOffset) override
+	{
+		if (!valid || indexCount == 0)
+			return;
+
+		auto encoder = (__bridge id<MTLRenderCommandEncoder>)MetalGlobals::GetCurrentEncoder();
+		if (encoder == nil)
+			return;
+
+		void* mtlIndexBufferRaw = MetalResources::GetMtlBuffer(indexBuffer);
+		if (mtlIndexBufferRaw == nullptr)
+			return;
+		auto mtlIndexBuffer = (__bridge id<MTLBuffer>)mtlIndexBufferRaw;
+
+		ApplyBindings(encoder);
+
+		const MTLIndexType mtlIndexType = (indexType == IndexType::Uint16)
+			? MTLIndexTypeUInt16
+			: MTLIndexTypeUInt32;
+
+		[encoder drawIndexedPrimitives:ToMtlPrimitive(topology)
+		                    indexCount:indexCount
+		                     indexType:mtlIndexType
+		                   indexBuffer:mtlIndexBuffer
+		             indexBufferOffset:indexOffset];
+	}
+
+private:
+	static MTLPrimitiveType ToMtlPrimitive(PrimitiveTopology topology)
+	{
+		switch (topology) {
+			case PrimitiveTopology::Triangles:     return MTLPrimitiveTypeTriangle;
+			case PrimitiveTopology::TriangleStrip: return MTLPrimitiveTypeTriangleStrip;
+			case PrimitiveTopology::Lines:         return MTLPrimitiveTypeLine;
+			case PrimitiveTopology::LineStrip:     return MTLPrimitiveTypeLineStrip;
+			case PrimitiveTopology::Points:        return MTLPrimitiveTypePoint;
+		}
+		return MTLPrimitiveTypeTriangle;
+	}
+
+	// Apply pipeline state + the pending per-draw binding tables onto the
+	// encoder. Uniform buffers replay onto both vertex + fragment slots
+	// (spirv-cross maps Vulkan descriptor set 0 bindings onto identical MTL
+	// buffer indices). Vertex buffers go onto metalVertexBufferBaseSlot + slot
+	// to match the MTLVertexDescriptor layout assignments. Sampled textures
+	// bind onto the fragment stage only (current callers are all fragment
+	// samplers; vertex-stage samplers can land with the unit drawer).
+	void ApplyBindings(id<MTLRenderCommandEncoder> encoder)
+	{
 		[encoder setRenderPipelineState:pipelineState];
 
-		// Replay the pending uniform-buffer table onto both the vertex and
-		// fragment argument slots. spirv-cross maps Vulkan descriptor set 0
-		// bindings onto identical MTL buffer indices, so slot N goes to
-		// buffer(N) on both stages.
 		for (uint32_t slot = 0; slot < MetalGlobals::kMaxBindSlots; ++slot) {
 			const auto& binding = MetalGlobals::GetUniformBinding(slot);
 			if (binding.mtlBuffer == nullptr)
@@ -168,19 +277,28 @@ public:
 			[encoder setFragmentBuffer:buf offset:binding.offset atIndex:slot];
 		}
 
-		MTLPrimitiveType primType = MTLPrimitiveTypeTriangle;
-		switch (topology) {
-			case PrimitiveTopology::Triangles:     primType = MTLPrimitiveTypeTriangle; break;
-			case PrimitiveTopology::TriangleStrip: primType = MTLPrimitiveTypeTriangleStrip; break;
-			case PrimitiveTopology::Lines:         primType = MTLPrimitiveTypeLine; break;
-			case PrimitiveTopology::LineStrip:     primType = MTLPrimitiveTypeLineStrip; break;
-			case PrimitiveTopology::Points:        primType = MTLPrimitiveTypePoint; break;
+		for (uint32_t slot = 0; slot < MetalGlobals::kMaxBindSlots; ++slot) {
+			const auto& binding = MetalGlobals::GetVertexBufferBinding(slot);
+			if (binding.mtlBuffer == nullptr)
+				continue;
+			auto buf = (__bridge id<MTLBuffer>)binding.mtlBuffer;
+			const uint32_t mtlSlot = desc.metalVertexBufferBaseSlot + slot;
+			[encoder setVertexBuffer:buf offset:binding.offset atIndex:mtlSlot];
 		}
 
-		[encoder drawPrimitives:primType vertexStart:firstVertex vertexCount:vertexCount];
+		for (uint32_t slot = 0; slot < MetalGlobals::kMaxBindSlots; ++slot) {
+			const auto& binding = MetalGlobals::GetTextureBinding(slot);
+			if (binding.mtlTexture == nullptr)
+				continue;
+			auto tex = (__bridge id<MTLTexture>)binding.mtlTexture;
+			[encoder setFragmentTexture:tex atIndex:slot];
+			if (binding.mtlSampler != nullptr) {
+				auto samp = (__bridge id<MTLSamplerState>)binding.mtlSampler;
+				[encoder setFragmentSamplerState:samp atIndex:slot];
+			}
+		}
 	}
 
-private:
 	PipelineDesc desc;
 	std::string log;
 	bool valid = false;

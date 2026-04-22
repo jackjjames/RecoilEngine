@@ -49,6 +49,24 @@ struct BufferBinding {
 
 void SetUniformBinding(uint32_t slot, const BufferBinding& binding);
 const BufferBinding& GetUniformBinding(uint32_t slot);
+
+// Vertex buffer bindings. `slot` matches VertexBindingLayout::slot from the
+// PipelineDesc; the pipeline maps this onto the actual MTL buffer index at
+// draw time (offsetting by metalVertexBufferBaseSlot). Bindings live on the
+// global facade so callers that don't own the encoder can still participate.
+void SetVertexBufferBinding(uint32_t slot, const BufferBinding& binding);
+const BufferBinding& GetVertexBufferBinding(uint32_t slot);
+
+// Sampled-texture bindings for the fragment stage. `slot` is the
+// `[[texture(N)]]` index on the MSL side. `mtlTexture` is id<MTLTexture>.
+struct TextureBinding {
+	void* mtlTexture = nullptr; // id<MTLTexture>
+	void* mtlSampler = nullptr; // id<MTLSamplerState>
+};
+
+void SetTextureBinding(uint32_t slot, const TextureBinding& binding);
+const TextureBinding& GetTextureBinding(uint32_t slot);
+
 void ClearBindings();
 
 // The pipeline currently targeted by Enable() -- draw replays it onto the

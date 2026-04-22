@@ -17,6 +17,8 @@ void* g_currentDrawable = nullptr;
 void* g_currentCommandBuffer = nullptr;
 
 std::array<BufferBinding, kMaxBindSlots> g_uniformBindings{};
+std::array<BufferBinding, kMaxBindSlots> g_vertexBufferBindings{};
+std::array<TextureBinding, kMaxBindSlots> g_textureBindings{};
 
 } // namespace
 
@@ -47,10 +49,44 @@ const BufferBinding& GetUniformBinding(uint32_t slot)
 	return g_uniformBindings[slot];
 }
 
+void SetVertexBufferBinding(uint32_t slot, const BufferBinding& binding)
+{
+	if (slot >= kMaxBindSlots)
+		return;
+	g_vertexBufferBindings[slot] = binding;
+}
+
+const BufferBinding& GetVertexBufferBinding(uint32_t slot)
+{
+	static const BufferBinding empty{};
+	if (slot >= kMaxBindSlots)
+		return empty;
+	return g_vertexBufferBindings[slot];
+}
+
+void SetTextureBinding(uint32_t slot, const TextureBinding& binding)
+{
+	if (slot >= kMaxBindSlots)
+		return;
+	g_textureBindings[slot] = binding;
+}
+
+const TextureBinding& GetTextureBinding(uint32_t slot)
+{
+	static const TextureBinding empty{};
+	if (slot >= kMaxBindSlots)
+		return empty;
+	return g_textureBindings[slot];
+}
+
 void ClearBindings()
 {
 	for (auto& binding : g_uniformBindings)
 		binding = BufferBinding{};
+	for (auto& binding : g_vertexBufferBindings)
+		binding = BufferBinding{};
+	for (auto& binding : g_textureBindings)
+		binding = TextureBinding{};
 }
 
 void SetCurrentPipelineState(void* pipelineState) { g_currentPipelineState = pipelineState; }

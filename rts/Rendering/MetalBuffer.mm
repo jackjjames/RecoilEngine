@@ -2,6 +2,7 @@
 
 #include "Rendering/IBuffer.h"
 #include "Rendering/MetalRenderGlobals.h"
+#include "Rendering/MetalResources.h"
 
 #import <Metal/Metal.h>
 
@@ -76,3 +77,17 @@ std::unique_ptr<IBuffer> CreateMetalBuffer(size_t size, const void* initialData)
 {
 	return std::make_unique<MetalBuffer>(size, initialData);
 }
+
+namespace MetalResources {
+
+void* GetMtlBuffer(const IBuffer& buffer)
+{
+	// dynamic_cast is safe here: the Metal build only ever instantiates
+	// MetalBuffer behind IBuffer. Returns nullptr for any other subtype so
+	// callers can fall back gracefully.
+	if (const auto* mb = dynamic_cast<const MetalBuffer*>(&buffer))
+		return mb->GetMtlBuffer();
+	return nullptr;
+}
+
+} // namespace MetalResources

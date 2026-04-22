@@ -13,6 +13,8 @@ namespace Shader {
 	struct IShaderObject;
 }
 
+class ITexture;
+
 struct ShaderReflectionEntry
 {
 	std::string name;
@@ -24,11 +26,59 @@ struct ShaderReflection
 	std::vector<ShaderReflectionEntry> uniformBuffers;
 };
 
+enum class VertexFormat
+{
+	Float1,
+	Float2,
+	Float3,
+	Float4,
+};
+
+// Single vertex attribute. `location` is the GLSL `layout(location = N)` slot
+// and matches `[[attribute(N)]]` on the translated MSL side. `bufferSlot` is
+// the vertex buffer index this attribute reads from (allows interleaved or
+// separate-stream layouts).
+struct VertexAttribute
+{
+	uint32_t location   = 0;
+	uint32_t bufferSlot = 0;
+	uint32_t offset     = 0;
+	VertexFormat format = VertexFormat::Float4;
+};
+
+// Per vertex-buffer-slot layout. Today only per-vertex is supported; per-
+// instance advances later when it is needed.
+struct VertexBindingLayout
+{
+	uint32_t slot    = 0;
+	uint32_t stride  = 0;
+};
+
+enum class IndexType
+{
+	Uint16,
+	Uint32,
+};
+
 struct PipelineDesc
 {
 	std::string name;
 	std::string vertexSource;
 	std::string fragmentSource;
+
+	// Optional vertex input description. Leave empty for vertex-less
+	// procedural pipelines (gl_VertexIndex style). The translator still
+	// accepts `layout(location = N) in ...` declarations; the entries here
+	// just describe how the GPU decodes the bound vertex buffer(s).
+	std::vector<VertexAttribute> vertexAttributes;
+	std::vector<VertexBindingLayout> vertexBindings;
+
+	// Metal-only: which MTL buffer index the vertex-stage should read vertex
+	// data from. spirv-cross defaults to slot 30 for a single interleaved
+	// stream; when callers use multiple streams the GLSL `layout(location = ...)`
+	// declarations still drive attribute routing but the buffer slot is
+	// chosen here. Matches `slot` inside VertexBindingLayout; ignored on GL.
+	uint32_t metalVertexBufferBaseSlot = 30;
 };
 
 enum class PrimitiveTopology
@@ -69,6 +119,16 @@ public:
 		return reflection;
 	}
 
+	// Bind a vertex buffer range. `slot` corresponds to the VertexBindingLayout
+	// slot specified in PipelineDesc. Default is a no-op so legacy program
+	// objects that do not participate in the vertex input pipeline still
+	// compile. Backend standalone pipelines override.
+	virtual void BindVertexBuffer(uint32_t /*slot*/, const IBuffer& /*buffer*/, size_t /*offset*/ = 0) {}
+
+	// Bind a texture sampled-image to the fragment stage. Slot indexing is
+	// shared with Metal's `[[texture(N)]]` and GL's sampler unit index.
+	virtual void BindTexture(uint32_t /*slot*/, ITexture& /*texture*/) {}
+
 	// Issue a draw against the currently-enabled pipeline. Callers are
 	// expected to have called Enable() and any BindUniformBuffer() first.
 	// `firstVertex`/`vertexCount` follow glDrawArrays semantics.
@@ -77,6 +137,12 @@ public:
 	// through IProgramObject do not need to implement it. Backend standalone
 	// pipelines (GL + Metal) override this.
 	virtual void Draw(PrimitiveTopology /*topology*/, uint32_t /*firstVertex*/, uint32_t /*vertexCount*/) {}
+
+	// Indexed draw. `indexBuffer` is bound + consumed at draw time.
+	// `indexOffset` is in bytes from the start of the index buffer.
+	virtual void DrawIndexed(PrimitiveTopology /*topology*/, uint32_t /*indexCount*/,
+	                         IndexType /*indexType*/, const IBuffer& /*indexBuffer*/,
+	                         size_t /*indexOffset*/ = 0) {}
 };
 
 class GLShaderPipeline : public IShaderPipeline

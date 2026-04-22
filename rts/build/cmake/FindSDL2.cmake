@@ -21,4 +21,9 @@ if (SDL2_FOUND AND NOT TARGET SDL2::SDL2)
                         INTERFACE_INCLUDE_DIRECTORIES "${SDL2_INCLUDE_DIRS}"
                         IMPORTED_LOCATION ${SDL2_LIBRARY}
   )
+elseif (TARGET SDL2::SDL2)
+  # Homebrew's sdl2-config only exposes .../include/SDL2 on the target, but
+  # spring sources #include <SDL2/SDL_foo.h>, which needs the parent dir too.
+  set_property(TARGET SDL2::SDL2 APPEND PROPERTY
+               INTERFACE_INCLUDE_DIRECTORIES "${SDL2_INCLUDE_DIRS}")
 endif()

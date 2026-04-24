@@ -115,6 +115,21 @@ CMiniMap::CMiniMap()
 	const float isx = mapDims.mapx / float(mapDims.pwr2mapx);
 	const float isy = mapDims.mapy / float(mapDims.pwr2mapy);
 
+#if defined(RENDER_BACKEND_METAL)
+	// Background shader + minimap-buttons texture upload live in GL land;
+	// MiniMap's GL draw paths are gated off on Metal (see Update / Draw /
+	// DrawForReal / RenderCachedTexture below) so skipping both here is
+	// safe. Constructor-side state that Lua queries (curPos / curDim /
+	// aspectRatio / maximized / minimized / rotation / simpleColors...)
+	// is still set up above, so minimap->GetX()/GetSizeY()/etc behave
+	// the same as they do on GL.
+	(void)isx;
+	(void)isy;
+	bgShader = nullptr;
+	buttonsTextureID = 0;
+	const float xshift = 0.0f;
+	const float yshift = 0.0f;
+#else
 	bgShader = shaderHandler->CreateProgramObject("[MiniMap]", "Background");
 	bgShader->AttachShaderObject(shaderHandler->CreateShaderObject("GLSL/MiniMapVertProg.glsl", "", GL_VERTEX_SHADER));
 	bgShader->AttachShaderObject(shaderHandler->CreateShaderObject("GLSL/MiniMapFragProg.glsl", "", GL_FRAGMENT_SHADER));
@@ -156,6 +171,7 @@ CMiniMap::CMiniMap()
 	}
 	const float xshift = unfiltered ? 0.0f : (0.5f / bitmap.xsize);
 	const float yshift = unfiltered ? 0.0f : (0.5f / bitmap.ysize);
+#endif
 	    moveBox.xminTx = 0.50f + xshift;
 	    moveBox.xmaxTx = 0.75f - xshift;
 	  resizeBox.xminTx = 0.75f + xshift;
@@ -178,10 +194,17 @@ CMiniMap::CMiniMap()
 CMiniMap::~CMiniMap()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
+#if !defined(RENDER_BACKEND_METAL)
+	// Paired with the guarded GL init in the constructor; on Metal there
+	// is no bgShader, buttonsTextureID stays 0, and minimapTex was never
+	// glGen'd. glDeleteTextures(1, &0) is a valid GL no-op but glad's
+	// entry point is null on this backend (gladLoadGL is gated on the
+	// SDL GL context) so we can't even issue the no-op call.
 	shaderHandler->ReleaseProgramObjects("[MiniMap]");
 
 	glDeleteTextures(1, &buttonsTextureID);
 	glDeleteTextures(1, &minimapTex);
+#endif
 
 	configHandler->RemoveObserver(this);
 }
@@ -1086,6 +1109,14 @@ void CMiniMap::Update()
 	if (minimized || curDim.x == 0 || curDim.y == 0)
 		return;
 
+#if defined(RENDER_BACKEND_METAL)
+	// RTT path relies on FBO + legacy matrix stack (UpdateTextureCache /
+	// ResizeTextureCache) + the GL bgShader. On Metal we keep curPos /
+	// curDim live so Lua queries stay meaningful but skip the cache
+	// texture maintenance entirely. The full RTT port lands with the
+	// real C3d slice on top of MetalRenderTarget.
+	return;
+#else
 	if (!renderToTexture)
 		return;
 
@@ -1129,6 +1160,7 @@ void CMiniMap::Update()
 
 	// gets done in CGame
 	// fbo.Unbind();
+#endif
 }
 
 
@@ -1229,6 +1261,12 @@ void CMiniMap::Draw()
 	if (slaveDrawMode)
 		return;
 
+#if defined(RENDER_BACKEND_METAL)
+	// Border + cached-texture blit goes through legacy matrix stack +
+	// GL::SubState + bgShader; all GL-only today. Skip until the real
+	// C3d slice on top of MetalRenderTarget.
+	return;
+#else
 	// Draw Border
 	{
 		glEnable(GL_BLEND);
@@ -1258,6 +1296,7 @@ void CMiniMap::Draw()
 
 	// draw minimap itself
 	DrawForReal(true, false, false);
+#endif
 }
 
 void CMiniMap::DrawMinimizedButtonQuad() const
@@ -1336,6 +1375,17 @@ void CMiniMap::DrawForReal(bool useNormalizedCoors, bool updateTex, bool luaCall
 	if (minimized)
 		return;
 
+#if defined(RENDER_BACKEND_METAL)
+	// Direct path into the GL state machine (active texture, SubState,
+	// bgShader, FBO bind, world-stuff draw). LuaOpenGL::gl.DrawMiniMap
+	// in widgets lands here; we skip the whole body on Metal so those
+	// Lua calls don't null-deref their glad entry points. Real port
+	// lands with C3d.
+	(void)useNormalizedCoors;
+	(void)updateTex;
+	(void)luaCall;
+	return;
+#else
 	glActiveTexture(GL_TEXTURE0);
 
 	if (!updateTex) {
@@ -1402,6 +1452,7 @@ void CMiniMap::DrawForReal(bool useNormalizedCoors, bool updateTex, bool luaCall
 		globalRendering->LoadViewport();
 
 	cursorIcons.Enable(true);
+#endif
 }
 
 
@@ -1770,6 +1821,13 @@ void CMiniMap::DrawNotes()
 bool CMiniMap::RenderCachedTexture(bool useNormalizedCoors)
 {
 	RECOIL_DETAILED_TRACY_ZONE;
+#if defined(RENDER_BACKEND_METAL)
+	// Cached texture is never populated on Metal (Update short-circuits);
+	// bail so callers treat the minimap as 'nothing to blit this frame'
+	// rather than walking the GL bind / draw path below.
+	(void)useNormalizedCoors;
+	return false;
+#endif
 	if (!renderToTexture)
 		return false;
 

@@ -66,14 +66,7 @@ float3 COverviewController::SwitchFrom() const
 	const float3 mdir = mouse->dir;
 	const float3 rpos = pos + mdir * CGround::LineGroundCol(pos, pos + mdir * 50000.0f, false);
 
-	// minimap is null on the Metal scaffold (CWorldDrawer::InitPost early
-	// returns because IGroundDrawer / IInfoTextureHandler / shadowHandler
-	// are not ported yet, and minimap construction sits in the same block
-	// in CGame::LoadInterface). Until the MiniMap port lands in S9-C3d,
-	// skip the minimized-state sync rather than null-deref during any
-	// camera mode switch triggered by Lua (e.g. the LockCamera widget
-	// cycles every camera during LuaRules init).
-	if (!globalRendering->dualScreenMode && minimap != nullptr)
+	if (!globalRendering->dualScreenMode)
 		minimap->SetMinimized(minimizeMinimap);
 
 	return rpos;
@@ -96,9 +89,7 @@ void COverviewController::SwitchTo(const CCameraController* oldCam, const bool s
 	if (showText)
 		LOG("Switching to Overview style camera");
 
-	// See the matching guard in SwitchFrom(): minimap is null on the
-	// Metal scaffold until S9-C3d wires the MTL RTT path.
-	if (!globalRendering->dualScreenMode && minimap != nullptr) {
+	if (!globalRendering->dualScreenMode) {
 		minimizeMinimap = minimap->GetMinimized();
 		minimap->SetMinimized(true);
 	}

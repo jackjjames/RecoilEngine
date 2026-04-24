@@ -829,15 +829,22 @@ void CGame::LoadInterface()
 	}
 
 #if defined(RENDER_BACKEND_METAL)
-	// Game HUD + chrome (tooltip, guihandler, minimap, resource bar) all
-	// spin up shader programs + FBOs + textures in their constructors. Same
-	// Stage 9/10 story as WorldDrawer -- leave the pointers null on Metal
-	// so the game loop can fall through into LuaRules / LuaUI, which is
-	// where the interesting BAR widget behaviour lives. Real implementations
-	// land with the UI/chrome port (S10-C*).
+	// Tooltip / GuiHandler / ResourceBar all spin up shader programs,
+	// FBOs, and texture atlases in their constructors. Same Stage 9/10
+	// story as WorldDrawer - leave them null so the game loop can fall
+	// through into LuaRules / LuaUI, which is where the interesting BAR
+	// widget behaviour lives. Real implementations land with the UI /
+	// chrome port (S10-C*).
+	//
+	// MiniMap is different: its GL work (bgShader, buttons texture, RTT
+	// FBO) is already gated inside the class on Metal, so we construct
+	// it live. That keeps minimap->GetX / GetSizeY / GetPosSafe / etc.
+	// working for the ~60 Lua and C++ callsites that rely on the object
+	// existing (widget-side Spring.Get*MiniMap*, camera mode switches,
+	// Lua input routing via CMouseHandler, etc).
 	tooltip = nullptr;
 	guihandler = nullptr;
-	minimap = nullptr;
+	minimap = new CMiniMap();
 	resourceBar = nullptr;
 #else
 	tooltip = new CTooltipConsole();

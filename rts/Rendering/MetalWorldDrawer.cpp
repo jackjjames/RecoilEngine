@@ -58,7 +58,7 @@ layout(location = 1) out vec2 vUV;
 
 layout(set = 0, binding = 0) uniform CameraUBO {
     mat4 uViewProj;
-    vec4 uMinHeight_MaxHeight_Unused_Unused;
+    vec4 uMinHeight_MaxHeight_HaveDiffuse_HaveNormals;
     vec4 uSunDirXYZ_SquareSize;
     vec4 uCornerSizeXY_InvCornerSizeXY;
 } ubo;
@@ -83,19 +83,19 @@ layout(location = 0) out vec4 fragColor;
 
 layout(set = 0, binding = 0) uniform CameraUBO {
     mat4 uViewProj;
-    vec4 uMinHeight_MaxHeight_HaveDiffuse_Unused;
+    vec4 uMinHeight_MaxHeight_HaveDiffuse_HaveNormals;
     vec4 uSunDirXYZ_SquareSize;
     vec4 uCornerSizeXY_InvCornerSizeXY;
 } ubo;
 
 layout(set = 0, binding = 1) uniform sampler2D uHeight;
 layout(set = 0, binding = 2) uniform sampler2D uDiffuse;
+layout(set = 0, binding = 3) uniform sampler2D uNormals;
 
-// Build a world-space normal from the heightmap by central-differencing
-// four neighbour samples in UV space. The world-space step for one
-// heightmap texel is SQUARE_SIZE (pxOrigin -> px+1 on the corner grid);
-// dy is raw heightmap delta. Cross product gives the upward normal.
-vec3 ComputeTerrainNormal(vec2 uv)
+// Fallback: build a world-space normal from the heightmap by
+// central-differencing four neighbour samples in UV space. Used only
+// when the pre-baked map normals aren't available (haveNormals == 0).
+vec3 ComputeTerrainNormalFromHeight(vec2 uv)
 {
     vec2 texel = ubo.uCornerSizeXY_InvCornerSizeXY.zw;
     float hL = textureLod(uHeight, uv + vec2(-texel.x,  0.0), 0.0).r;
@@ -110,20 +110,16 @@ vec3 ComputeTerrainNormal(vec2 uv)
 }
 
 void main() {
-    // Albedo: sample the SMF minimap as a full-map diffuse surrogate
-    // (top mip 1024x1024, decompressed from the .smf's built-in DXT1
-    // minimap at load time). uv is already normalised [0,1] across the
-    // whole map by MetalWorldDrawer::BuildGridMesh, so the per-pixel
-    // sample = colour at that world XZ. When no minimap is available
-    // (haveDiffuse == 0) fall back to a hypsometric band so the mesh
-    // is still readable.
-    float haveDiffuse = ubo.uMinHeight_MaxHeight_HaveDiffuse_Unused.z;
+    // Albedo: SMF minimap as full-map diffuse surrogate (see
+    // MetalWorldDrawer for the load path). Falls back to a hypsometric
+    // band when no minimap is available (synthetic test maps).
+    float haveDiffuse = ubo.uMinHeight_MaxHeight_HaveDiffuse_HaveNormals.z;
     vec3 albedo;
     if (haveDiffuse > 0.5) {
         albedo = texture(uDiffuse, vUV).rgb;
     } else {
-        float minH = ubo.uMinHeight_MaxHeight_HaveDiffuse_Unused.x;
-        float maxH = ubo.uMinHeight_MaxHeight_HaveDiffuse_Unused.y;
+        float minH = ubo.uMinHeight_MaxHeight_HaveDiffuse_HaveNormals.x;
+        float maxH = ubo.uMinHeight_MaxHeight_HaveDiffuse_HaveNormals.y;
         float t = clamp((vWorldPos.y - minH) / max(maxH - minH, 1.0), 0.0, 1.0);
         vec3 lo = vec3(0.14, 0.20, 0.30);
         vec3 mid = vec3(0.30, 0.40, 0.22);
@@ -132,10 +128,24 @@ void main() {
         albedo = mix(albedo, hi, smoothstep(0.55, 0.95, t));
     }
 
-    // Lambertian + constant ambient, sun direction is world-space "to the
-    // light". Half-Lambert blend keeps slopes from pitch-black, which
-    // matches BAR's usual look better than pure N.L.
-    vec3 N = ComputeTerrainNormal(vUV);
+    // Normal: prefer the pre-baked per-texel center normals uploaded
+    // from CReadMap::GetCenterNormalsUnsynced() (one normal per
+    // heightmap square, packed in RGBA8 with xyz*0.5+0.5). This is
+    // higher frequency than central-differencing the coarse vertex
+    // mesh's heightmap sampler. Fall back to heightmap differencing if
+    // the normals texture failed to upload.
+    float haveNormals = ubo.uMinHeight_MaxHeight_HaveDiffuse_HaveNormals.w;
+    vec3 N;
+    if (haveNormals > 0.5) {
+        vec3 n = texture(uNormals, vUV).xyz * 2.0 - 1.0;
+        N = normalize(n);
+    } else {
+        N = ComputeTerrainNormalFromHeight(vUV);
+    }
+
+    // Lambertian + constant ambient, sun direction is world-space "to
+    // the light". Half-Lambert keeps slopes from pitch-black, matching
+    // BAR's usual shaded-terrain look better than pure N.L.
     vec3 L = normalize(ubo.uSunDirXYZ_SquareSize.xyz);
     float ndl = max(dot(N, L), 0.0);
     float half_lambert = 0.5 * ndl + 0.5 * max(dot(N, L), -0.2);
@@ -152,7 +162,7 @@ void main() {
 
 struct alignas(16) CameraUBOLayout {
 	float viewProj[16];
-	float params[4];            // minHeight, maxHeight, haveDiffuse(0/1), 0
+	float params[4];            // minHeight, maxHeight, haveDiffuse(0/1), haveNormals(0/1)
 	float sunDirAndSquare[4];   // sun.xyz, SQUARE_SIZE
 	float cornerSize[4];        // cornersX, cornersZ, 1/cornersX, 1/cornersZ
 };
@@ -232,6 +242,27 @@ void DecompressBC1Image(const uint8_t* src, uint8_t* dst, int width, int height)
 			DecompressBC1Block(blk, dstBlk, dstStride);
 		}
 	}
+}
+
+// Pack world-space float3 normals (-1..1) into RGBA8 (0..255, xyz*0.5
+// + 0.5, alpha=255). The fragment shader unpacks symmetrically. Avoids
+// requiring RGBA16F support on every Metal device - 8-bit normals are
+// fine for diffuse-only lighting at the map resolution.
+std::vector<uint8_t> PackCenterNormalsRGBA8(const float3* src, int w, int h)
+{
+	const size_t n = static_cast<size_t>(w) * static_cast<size_t>(h);
+	std::vector<uint8_t> out(n * 4, 0);
+	for (size_t i = 0; i < n; ++i) {
+		const float3 nrm = src[i];
+		const uint8_t r = static_cast<uint8_t>(std::clamp(nrm.x * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f + 0.5f);
+		const uint8_t g = static_cast<uint8_t>(std::clamp(nrm.y * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f + 0.5f);
+		const uint8_t b = static_cast<uint8_t>(std::clamp(nrm.z * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f + 0.5f);
+		out[i * 4 + 0] = r;
+		out[i * 4 + 1] = g;
+		out[i * 4 + 2] = b;
+		out[i * 4 + 3] = 255;
+	}
+	return out;
 }
 
 // Read the SMF-embedded minimap (top mip, 1024x1024 DXT1) and
@@ -424,6 +455,31 @@ MetalWorldDrawer::MetalWorldDrawer()
 		}
 	}
 
+	// --- Pre-baked per-texel center normals. One RGB8 per heightmap
+	// square (mapx x mapy). Sampled at aUV with linear filtering so
+	// the shading between texels blends smoothly. Caller must fall
+	// back to the vertex-stage heightmap derivative if this fails.
+	{
+		const float3* centerNormals = readMap->GetCenterNormalsUnsynced();
+		if (centerNormals != nullptr && mapDims.mapx > 0 && mapDims.mapy > 0) {
+			std::vector<uint8_t> packed = PackCenterNormalsRGBA8(centerNormals, mapDims.mapx, mapDims.mapy);
+
+			GL::TextureCreationParams nmParams;
+			nmParams.linearTextureFilter = true;
+			nmParams.linearMipMapFilter  = false;
+			nmParams.reqNumLevels = 1;
+			normalsTexture = backend.CreateTexture2D(
+				int2(mapDims.mapx, mapDims.mapy), kGL_RGBA8, nmParams, /*wantCompress=*/false);
+			if (normalsTexture && normalsTexture->IsValid()) {
+				normalsTexture->UploadImage(packed.data());
+				LOG("[MetalWorldDrawer] center normals loaded (%dx%d RGBA8)", mapDims.mapx, mapDims.mapy);
+			} else {
+				LOG_L(L_WARNING, "[MetalWorldDrawer] normals texture creation failed");
+				normalsTexture.reset();
+			}
+		}
+	}
+
 	// --- Uniform buffer (viewProj + height range + sun / corner info).
 	CameraUBOLayout seedUbo{};
 	seedUbo.viewProj[0]  = 1.0f;
@@ -492,6 +548,7 @@ void MetalWorldDrawer::Draw() const
 	ubo.params[0] = cachedMinHeight;
 	ubo.params[1] = cachedMaxHeight;
 	ubo.params[2] = (diffuseTexture && diffuseTexture->IsValid()) ? 1.0f : 0.0f;
+	ubo.params[3] = (normalsTexture && normalsTexture->IsValid()) ? 1.0f : 0.0f;
 
 	// Sun direction: take from the live sky (CNullSky wires ISkyLight on
 	// init from mapInfo->light.sunDir). Fall back to a reasonable
@@ -519,6 +576,10 @@ void MetalWorldDrawer::Draw() const
 		pipeline->BindTexture(2, *diffuseTexture);
 	else
 		pipeline->BindTexture(2, *heightmapTexture);   // placeholder - fragment won't sample it (haveDiffuse=0)
+	if (normalsTexture && normalsTexture->IsValid())
+		pipeline->BindTexture(3, *normalsTexture);
+	else
+		pipeline->BindTexture(3, *heightmapTexture);   // placeholder - fragment won't sample it (haveNormals=0)
 	pipeline->BindVertexBuffer(0, *vertexBuffer);
 	pipeline->DrawIndexed(PrimitiveTopology::Triangles, indexCount, IndexType::Uint32, *indexBuffer);
 	pipeline->Disable();

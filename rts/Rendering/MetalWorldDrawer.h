@@ -55,6 +55,15 @@ private:
 	// covered and the view looks like an actual BAR map.
 	std::unique_ptr<ITexture>        diffuseTexture;
 
+	// Pre-baked per-texel world-space normals from CReadMap (one normal
+	// per heightmap square, packed into RGBA8 with xyz*0.5+0.5). Gives
+	// finer lighting than central-differencing the vertex-stage
+	// heightmap sampler - the grid mesh is 193x193 but the normals
+	// array is full mapx*mapy, so slope details like crests and crater
+	// rims shade correctly. Same (u,v) addressing as the diffuse /
+	// heightmap textures.
+	std::unique_ptr<ITexture>        normalsTexture;
+
 	uint32_t indexCount       = 0;
 	int32_t  cachedCornersX   = 0;
 	int32_t  cachedCornersZ   = 0;

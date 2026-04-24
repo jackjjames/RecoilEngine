@@ -48,6 +48,7 @@
 #include "Rendering/ShadowHandler.h"
 #include "Rendering/TeamHighlight.h"
 #if defined(RENDER_BACKEND_METAL)
+#include "Rendering/MetalSkyPass.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalWorldDrawer.h"
@@ -1477,15 +1478,24 @@ bool CGame::Draw() {
 	// them (readMap / globalRendering->renderBackend are both set up
 	// before CGame::Draw starts ticking).
 	static std::unique_ptr<MetalWorldDrawer> metalWorldDrawer;
+	static std::unique_ptr<MetalSkyPass>     metalSkyPass;
 	static MetalSplashRenderer               loadTile;
 	static MetalTextOverlay                  textOverlay;
 	if (metalWorldDrawer == nullptr)
 		metalWorldDrawer = std::make_unique<MetalWorldDrawer>();
+	if (metalSkyPass == nullptr)
+		metalSkyPass = std::make_unique<MetalSkyPass>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
 
 	SetDrawMode(gameNormalDraw);
+
+	// Sky first: gl_Position.z = 1 keeps it behind everything and the
+	// fullscreen triangle fills pixels the terrain doesn't cover. The
+	// real CModernSky port (S9-C5b) replaces this.
+	if (metalSkyPass && metalSkyPass->IsValid())
+		metalSkyPass->Draw();
 
 	if (metalWorldDrawer && metalWorldDrawer->IsValid()) {
 		metalWorldDrawer->Draw();

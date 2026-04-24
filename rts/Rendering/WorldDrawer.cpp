@@ -17,6 +17,7 @@
 #include "Rendering/Env/GrassDrawer.h"
 #include "Rendering/Env/IGroundDecalDrawer.h"
 #include "Rendering/Env/ISky.h"
+#include "Rendering/Env/NullSky.h"
 #include "Rendering/Env/SunLighting.h"
 #include "Rendering/Env/WaterRendering.h"
 #include "Rendering/Env/MapRendering.h"
@@ -120,12 +121,19 @@ void CWorldDrawer::InitPre() const
 	// GL_LIGHTs, shader programs, FBOs) are Stage 9 work. But the model
 	// loader + LuaObjectDrawer are CPU-side (model geometry parsing,
 	// bounding radii) and Lua scripts dereference UnitDef::radius during
-	// CGame::Load, so they stay live on Metal. Texture handlers + sky +
-	// feature drawer are deferred.
+	// CGame::Load, so they stay live on Metal. Texture handlers + real
+	// sky + feature drawer are deferred.
 	LuaObjectDrawer::Init();
 	CColorMap::InitStatic();
 	S3DModelVAO::Init();
 	modelLoader.Init();
+	// Install a no-op sky so ISky::GetSky() / sky->GetLight() return live
+	// objects instead of null. BAR map gadgets (e.g. map_atmosphere_cegs)
+	// call gl.GetSun("pos") + gl.GetAtmosphere(...) during LuaRules init
+	// on the unsynced side, which null-derefs without this. CModernSky /
+	// CSkyBox land with S9-C5b; they touch GL and cube-map textures.
+	ISky::GetSky() = std::make_unique<CNullSky>();
+	sunLighting->Init();
 	return;
 #else
 	LuaObjectDrawer::Init();
@@ -152,15 +160,12 @@ void CWorldDrawer::InitPre() const
 
 void CWorldDrawer::InitPost() const
 {
-#if defined(RENDER_BACKEND_METAL)
-	// See InitPre for the gating rationale. Each of these subsystems creates
-	// raw GL objects. The shadow handler, info-texture handler, ground
-	// decal / grass / water / sky / projectile / unit / feature drawers
-	// all land incrementally as Stage 9 commits.
-	return;
-#endif
-	char buf[512] = {0};
-
+	// Run the model preload pass on every backend. CModelLoader::PreloadModel
+	// enqueues S3O parse + PostProcessGeometry on the ThreadPool and skips
+	// Upload() (which is the only part that touches GL / Metal texture +
+	// VBO state), so this is backend-agnostic CPU work. Gating it off on
+	// Metal turned a ~few-second parallel parse into a ~28-minute serial
+	// crawl driven by Lua's SolidObjectDef::LoadModel fallback.
 	CModelsLock::SetThreadSafety(true);
 	const bool preloadMode = configHandler->GetBool("PreloadModels");
 	{
@@ -180,6 +185,16 @@ void CWorldDrawer::InitPost() const
 			}
 		}
 	}
+
+#if defined(RENDER_BACKEND_METAL)
+	// See InitPre for the gating rationale. Each of the subsystems below
+	// creates raw GL objects. The shadow handler, info-texture handler,
+	// ground decal / grass / water / sky / projectile / unit / feature
+	// drawers all land incrementally as Stage 9 commits.
+	return;
+#endif
+	char buf[512] = {0};
+
 	auto lock = CLoadLock::GetUniqueLock();
 	{
 		loadscreen->SetLoadMessage("Creating ShadowHandler");

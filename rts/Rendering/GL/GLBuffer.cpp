@@ -39,6 +39,16 @@ public:
 		glBindBufferRange(GL_UNIFORM_BUFFER, slot, bufferId, static_cast<GLintptr>(offset), static_cast<GLsizeiptr>(size));
 	}
 
+	void BindStorageRange(uint32_t slot, size_t offset, size_t size) const override
+	{
+		glBindBufferRange(GL_SHADER_STORAGE_BUFFER, slot, bufferId, static_cast<GLintptr>(offset), static_cast<GLsizeiptr>(size));
+	}
+
+	void BindIndirect() const override
+	{
+		glBindBuffer(GL_DRAW_INDIRECT_BUFFER, bufferId);
+	}
+
 private:
 	uint32_t bufferId = 0;
 	size_t sizeBytes = 0;

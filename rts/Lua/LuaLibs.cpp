@@ -56,6 +56,17 @@ namespace LuaLibs {
 			, "tmpname"
 			, "getenv"
 		});
+		// Keep our C-level load-screen pump hook protected from user Lua
+		// code: a single debug.sethook(nil) call anywhere in a widget /
+		// gadget silently clobbers the count hook the engine installs in
+		// CLuaHandle::CLuaHandle, and the main thread stops pumping SDL /
+		// redrawing the load screen during long synchronous init phases.
+		// sethook is debug-only and not required by gameplay code; the
+		// two in-tree users (cont/**/watchdog.lua) are opt-in debug
+		// widgets that simply won't function without it, which is fine.
+		RemoveMethods(L, "debug",
+			{ "sethook"
+		});
 	}
 
 } // namespace LuaLibs

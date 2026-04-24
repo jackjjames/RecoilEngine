@@ -16,6 +16,7 @@ std::unique_ptr<IRenderTarget> CreateMetalRenderTarget();
 std::unique_ptr<IBuffer> CreateMetalBuffer(size_t size, const void* data = nullptr);
 std::unique_ptr<IShaderPipeline> CreateMetalShaderPipeline(const PipelineDesc& desc);
 std::unique_ptr<ITexture> CreateMetalTexture2D(const int2& size, uint32_t internalFormat, const GL::TextureCreationParams& params);
+std::unique_ptr<ITexture> CreateMetalTexture2DArray(const int2& size, uint32_t numPages, uint32_t internalFormat, const GL::TextureCreationParams& params);
 std::unique_ptr<ISampler> CreateMetalSampler(const GL::TextureCreationParams& params);
 
 namespace {
@@ -53,11 +54,9 @@ public:
 		return CreateMetalTexture2D(size, internalFormat, params);
 	}
 
-	std::unique_ptr<ITexture> CreateTexture2DArray(const int2&, uint32_t, uint32_t, const GL::TextureCreationParams&, bool) const override
+	std::unique_ptr<ITexture> CreateTexture2DArray(const int2& size, uint32_t numPages, uint32_t internalFormat, const GL::TextureCreationParams& params, bool /*wantCompress*/) const override
 	{
-		// 2D arrays land when we have a consumer that actually needs them
-		// (unit atlas, font atlas array). Loading screen is single-texture.
-		return {};
+		return CreateMetalTexture2DArray(size, numPages, internalFormat, params);
 	}
 
 	std::unique_ptr<ITexture> CreateImportedTexture(uint32_t, uint32_t, const int2&, uint32_t, int32_t, uint32_t, bool) const override

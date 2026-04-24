@@ -20,6 +20,7 @@
 #include "Game/Game.h"
 #include "Game/GameHelper.h"
 #include "Game/Action.h"
+#include "Game/LoadScreen.h"
 #include "Game/GlobalUnsynced.h"
 #include "Game/Players/Player.h"
 #include "Game/Players/PlayerHandler.h"
@@ -132,6 +133,17 @@ static void LUA_ERASE_CONTEXT(const luaContextData* D, const spring::unsynced_se
 	const_cast<  spring::unsynced_set<const luaContextData*>*  >(S)->erase(D);
 }
 
+// Keeps the main window responsive during long synchronous Lua compile /
+// initialization phases on the single-threaded load path. LoadScreen::TickMain
+// is a no-op off the main thread, when there is no load screen up, or outside
+// the 30Hz throttle window, so leaving this hook installed at runtime costs
+// only a virtual call and a couple of comparisons per N instructions.
+static void loadScreenCountHook(lua_State* L, lua_Debug* ar)
+{
+	CLoadScreen::TickMain();
+}
+
+
 static int handlepanic(lua_State* L)
 {
 	throw content_error(luaL_optsstring(L, 1, "lua paniced"));
@@ -159,6 +171,10 @@ CLuaHandle::CLuaHandle(const string& _name, int _order, bool _userMode, bool _sy
 
 	L = LUA_OPEN(&D);
 	L_GC = lua_newthread(L);
+
+	// 10k instructions ≈ sub-millisecond at BAR's typical Lua speeds; the hook
+	// body throttles to 30Hz so actual pump cost stays bounded.
+	lua_sethook(L, loadScreenCountHook, LUA_MASKCOUNT, 10000);
 
 	LUA_INSERT_CONTEXT(&D, LUAHANDLE_CONTEXTS[D.synced]);
 
@@ -394,6 +410,16 @@ int CLuaHandle::RunCallInTraceback(
 			// note1: disable GC outside of this scope to prevent sync errors and similar
 			// note2: we collect garbage now in its own callin "CollectGarbage"
 			// lua_gc(L, LUA_GCRESTART, 0);
+
+			// Re-arm our load-screen pump hook on every pcall entry. Widgets /
+			// gadgets can call debug.sethook(nil) (the unsynced handle exposes
+			// the debug lib), and library-open paths internally swap hooks;
+			// without this, the pump stops firing after the first such clear
+			// and the window becomes unresponsive during long synchronous
+			// init phases (e.g. "Loading LuaRules" on the single-threaded
+			// Metal load path). Cheap: one store + a resethookcount.
+			lua_sethook(state, loadScreenCountHook, LUA_MASKCOUNT, 10000);
+
 			error = lua_pcall(state, nInArgs, nOutArgs, errFuncIdx);
 			// only run GC inside of "SetHandleRunning(L, true) ... SetHandleRunning(L, false)"!
 			lua_gc(state, LUA_GCSTOP, 0);

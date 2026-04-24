@@ -88,10 +88,11 @@ id<MTLSamplerState> BuildSampler(id<MTLDevice> device, const GL::TextureCreation
 class MetalTexture final : public ITexture
 {
 public:
-	MetalTexture(const int2& size_, uint32_t internalFormat_, const GL::TextureCreationParams& params, int32_t numLevels_)
+	MetalTexture(const int2& size_, uint32_t internalFormat_, const GL::TextureCreationParams& params, int32_t numLevels_, uint32_t numPages_ = 1)
 		: size(size_)
 		, internalFormat(internalFormat_)
 		, numLevels(numLevels_)
+		, numPages(numPages_)
 	{
 		id<MTLDevice> device = (__bridge id<MTLDevice>)MetalGlobals::GetDevice();
 		if (device == nil || size.x <= 0 || size.y <= 0)
@@ -103,15 +104,19 @@ public:
 			formatInfo = { MTLPixelFormatRGBA8Unorm, 4 };
 		}
 
-		MTLTextureDescriptor* texDesc = [MTLTextureDescriptor
-			texture2DDescriptorWithPixelFormat:formatInfo.fmt
-			                         width:static_cast<NSUInteger>(size.x)
-			                        height:static_cast<NSUInteger>(size.y)
-			                     mipmapped:(numLevels > 1)];
-		texDesc.usage = MTLTextureUsageShaderRead;
-		texDesc.storageMode = MTLStorageModeShared;
-		if (numLevels > 1)
-			texDesc.mipmapLevelCount = numLevels;
+		MTLTextureDescriptor* texDesc = [MTLTextureDescriptor new];
+		texDesc.pixelFormat      = formatInfo.fmt;
+		texDesc.width            = static_cast<NSUInteger>(size.x);
+		texDesc.height           = static_cast<NSUInteger>(size.y);
+		texDesc.mipmapLevelCount = (numLevels > 1) ? numLevels : 1;
+		texDesc.usage            = MTLTextureUsageShaderRead;
+		texDesc.storageMode      = MTLStorageModeShared;
+		if (numPages > 1) {
+			texDesc.textureType = MTLTextureType2DArray;
+			texDesc.arrayLength = numPages;
+		} else {
+			texDesc.textureType = MTLTextureType2D;
+		}
 
 		texture = [device newTextureWithDescriptor:texDesc];
 		sampler = BuildSampler(device, params, numLevels);
@@ -127,7 +132,7 @@ public:
 	uint32_t GetNativeId() const override { return 0; }
 	uint32_t GetTarget() const override { return kGL_TEXTURE_2D; }
 	uint32_t GetInternalFormat() const override { return internalFormat; }
-	uint32_t GetNumPages() const override { return 1; }
+	uint32_t GetNumPages() const override { return numPages; }
 	int32_t GetNumLevels() const override { return numLevels; }
 	int2 GetSize() const override { return size; }
 
@@ -142,7 +147,7 @@ public:
 	void Unbind() override {}
 	void Unbind(uint32_t /*relSlot*/) override {}
 
-	void UploadImage(const void* data, uint32_t /*layer*/ = 0, int level = 0) override
+	void UploadImage(const void* data, uint32_t layer = 0, int level = 0) override
 	{
 		if (texture == nil || data == nullptr)
 			return;
@@ -162,11 +167,13 @@ public:
 		MTLRegion region = MTLRegionMake2D(0, 0, mipW, mipH);
 		[texture replaceRegion:region
 		           mipmapLevel:level
+		                 slice:layer
 		             withBytes:data
-		           bytesPerRow:bytesPerRow];
+		           bytesPerRow:bytesPerRow
+		         bytesPerImage:bytesPerRow * mipH];
 	}
 
-	void UploadSubImage(const void* data, int xOffset, int yOffset, int width, int height, uint32_t /*layer*/ = 0, int level = 0) override
+	void UploadSubImage(const void* data, int xOffset, int yOffset, int width, int height, uint32_t layer = 0, int level = 0) override
 	{
 		if (texture == nil || data == nullptr || width <= 0 || height <= 0)
 			return;
@@ -178,8 +185,10 @@ public:
 		MTLRegion region = MTLRegionMake2D(xOffset, yOffset, width, height);
 		[texture replaceRegion:region
 		           mipmapLevel:level
+		                 slice:layer
 		             withBytes:data
-		           bytesPerRow:bytesPerRow];
+		           bytesPerRow:bytesPerRow
+		         bytesPerImage:bytesPerRow * height];
 	}
 
 	void GenerateMipmaps() override
@@ -200,6 +209,7 @@ private:
 	int2 size;
 	uint32_t internalFormat = 0;
 	int32_t numLevels = 1;
+	uint32_t numPages = 1;
 	MtlFormatInfo formatInfo{};
 
 	id<MTLTexture> texture = nil;
@@ -243,6 +253,11 @@ void* GetMtlSampler(const ITexture& texture)
 std::unique_ptr<ITexture> CreateMetalTexture2D(const int2& size, uint32_t internalFormat, const GL::TextureCreationParams& params)
 {
 	return std::make_unique<MetalTexture>(size, internalFormat, params, params.reqNumLevels > 0 ? params.reqNumLevels : 1);
+}
+
+std::unique_ptr<ITexture> CreateMetalTexture2DArray(const int2& size, uint32_t numPages, uint32_t internalFormat, const GL::TextureCreationParams& params)
+{
+	return std::make_unique<MetalTexture>(size, internalFormat, params, params.reqNumLevels > 0 ? params.reqNumLevels : 1, std::max(1u, numPages));
 }
 
 std::unique_ptr<ISampler> CreateMetalSampler(const GL::TextureCreationParams& params)

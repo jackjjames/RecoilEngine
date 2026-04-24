@@ -1,6 +1,7 @@
 /* This file is part of the Spring engine (GPL v2 or later), see LICENSE.html */
 
 #include "SolidObjectDef.h"
+#include "Game/LoadScreen.h"
 #include "Lua/LuaParser.h"
 #include "Rendering/Models/IModelParser.h"
 #include "Rendering/Models/3DModel.hpp"
@@ -81,6 +82,15 @@ S3DModel* SolidObjectDef::LoadModel() const
 		return model;
 	if (modelName.empty())
 		return nullptr;
+
+	// Lua defs parsing calls UnitDef.radius / GetModelRadius() for every unit
+	// during LuaRules init, which chains into a fully synchronous LoadModel
+	// (S3O parse + DDS decompress + DXT flip). On a single-threaded Metal
+	// load this keeps the main thread inside C code for ~25+ seconds with
+	// no Lua bytecode executing, so the CLuaHandle count-hook pump cannot
+	// fire. Pump directly here; no-op off the main thread / outside the
+	// load screen / inside the 30Hz throttle.
+	CLoadScreen::TickMain();
 
 	return (model = modelLoader.LoadModel(modelName));
 }

@@ -1,6 +1,7 @@
 /* This file is part of the Spring engine (GPL v2 or later), see LICENSE.html */
 
 #include <SDL.h>
+#include <cstdlib>
 #include <functional>
 
 #include "Rendering/GL/myGL.h"
@@ -19,6 +20,7 @@
 #include "Rendering/Textures/NamedTextures.h"
 #if defined(RENDER_BACKEND_METAL)
 #include "Rendering/MetalSplashRenderer.h"
+#include "Rendering/MetalTextOverlay.h"
 #endif
 #include "Sim/Misc/TeamHandler.h"
 #include "Sim/Path/IPathManager.h"
@@ -146,22 +148,12 @@ bool CLoadScreen::Init()
 		return true;
 
 	LOG("[LoadScreen::%s] single-threaded", __func__);
-#if defined(RENDER_BACKEND_METAL)
-	// Single-threaded load on mac blocks the main thread for minutes (full
-	// model preload + LuaDefs), and the Metal loadscreen does not yet redraw
-	// so Watchdog::ClearTimer(WDT_MAIN) is not naturally ticked. Deregister
-	// the main-thread watchdog for the duration of the load; it is
-	// re-registered once the game enters its normal update loop.
-	// Revisit when S8-C5c lands (Metal loadscreen) -- we should tick the
-	// watchdog from there instead.
-	Watchdog::DeregisterThread(WDT_MAIN);
-	game->Load(mapFileName);
-	Watchdog::RegisterThread(WDT_MAIN, true);
-	return false;
-#else
+	// Single-threaded load blocks the main thread for minutes (Lua defs,
+	// model preload). Update()/SetLoadMessage() ticks WDT_MAIN via
+	// UnfreezeSpring() and pumps SDL, so no Deregister/Register dance is
+	// needed here as long as load phases call SetLoadMessage periodically.
 	game->Load(mapFileName);
 	return false;
-#endif
 }
 
 void CLoadScreen::Kill()
@@ -181,9 +173,17 @@ void CLoadScreen::Kill()
 
 	CFontTexture::sync.SetThreadSafety(false);
 	CLoadLock::SetThreadSafety(false);
+#if defined(RENDER_BACKEND_METAL)
+	// GL context / GL_MULTISAMPLE hand-off doesn't apply: the Metal
+	// context stays current for the lifetime of the process and glad
+	// entry points are null (gladLoadGL is gated on the SDL GL render
+	// context, which Metal bypasses). Skip to avoid a null-deref on
+	// glad_glEnable during the load -> game transition.
+#else
 	// set last time and forever
 	globalRendering->MakeCurrentContext(false);
 	globalRendering->ToggleMultisampling();
+#endif
 }
 
 
@@ -243,6 +243,35 @@ void CLoadScreen::DeleteInstance()
 }
 
 
+void CLoadScreen::TickMain()
+{
+	CLoadScreen* ls = singleton;
+	if (ls == nullptr || ls->mtLoading)
+		return;
+	// Only meaningful from the main thread; the watchdog/SDL APIs we use are main-thread-only.
+	if (!Threading::IsMainThread())
+		return;
+
+	static spring_time lastTick = spring_gettime();
+	const spring_time now = spring_gettime();
+	if (spring_tomsecs(now - lastTick) < 33)
+		return;
+	lastTick = now;
+
+	// Guard against re-entry: Draw() can call luaMenu->Update() which runs
+	// Lua; that would fire our count-hook again and recurse into TickMain.
+	static thread_local bool inTick = false;
+	if (inTick)
+		return;
+	inTick = true;
+
+	spring::UnfreezeSpring(WDT_MAIN);
+	ls->Draw();
+
+	inTick = false;
+}
+
+
 /******************************************************************************/
 
 void CLoadScreen::ResizeEvent()
@@ -295,9 +324,11 @@ bool CLoadScreen::Update()
 		return true;
 	}
 
-	// without this call the window manager would think the window is unresponsive and thus ask for hard kill
+	// without this call the window manager would think the window is unresponsive and thus ask for hard kill.
+	// tick WDT_MAIN (not WDT_LOAD) on the single-threaded path: this thread *is* the main thread, and WDT_LOAD
+	// is only registered for the offscreen load worker in mtLoading mode.
 	if (!mtLoading)
-		spring::UnfreezeSpring(WDT_LOAD);
+		spring::UnfreezeSpring(WDT_MAIN);
 
 	return true;
 }
@@ -345,12 +376,39 @@ bool CLoadScreen::Draw()
 		// BeginFrame is called, so SwapBuffers alone would commit nothing.
 		// Lazy-init a MetalSplashRenderer on the first draw and reuse it
 		// for every load-screen frame so the window shows a tile/image
-		// instead of a black surface during the multi-minute load.
-		// Text / progress overlay lands with the CglFont Metal backend.
+		// instead of a black surface during the multi-minute load. The
+		// text overlay paints the most recent SetLoadMessage() text via a
+		// tiny 5x7 bitmap font; full CglFont support lands later.
 		static MetalSplashRenderer loadTile;
+		static MetalTextOverlay    textOverlay;
+
+		std::string msgCopy;
+		{
+			std::lock_guard<spring::recursive_mutex> lck(mutex);
+			msgCopy = lastLoadMessage;
+		}
+
 		globalRendering->BeginFrame();
 		loadTile.Draw();
+		if (!msgCopy.empty()) {
+			// Centered-ish near the bottom of the viewport, above the
+			// splash tile so the text does not get visually clipped.
+			constexpr float glyphH = 0.035f;
+			textOverlay.DrawLine(-0.95f, -0.70f, glyphH, msgCopy);
+		}
 		globalRendering->PresentFrame(true, true);
+
+		// The main thread is otherwise blocked inside CGame::Load between
+		// SetLoadMessage() calls. Pump SDL here so the window acknowledges
+		// traffic-light clicks. SDL_QUIT / close -> hard exit; we have no
+		// clean teardown path mid-load yet.
+		SDL_Event event;
+		while (SDL_PollEvent(&event)) {
+			if (event.type == SDL_QUIT ||
+			    (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE)) {
+				std::exit(0);
+			}
+		}
 #else
 		globalRendering->SwapBuffers(true, false);
 #endif
@@ -366,11 +424,13 @@ bool CLoadScreen::Draw()
 void CLoadScreen::SetLoadMessage(const std::string& text, bool replaceLast)
 {
 	RECOIL_DETAILED_TRACY_ZONE;
-	spring::UnfreezeSpring(WDT_LOAD);
+	// tick the correct watchdog: WDT_LOAD when on the loader thread, WDT_MAIN on single-threaded path.
+	spring::UnfreezeSpring(mtLoading ? WDT_LOAD : WDT_MAIN);
 
 	std::lock_guard<spring::recursive_mutex> lck(mutex);
 
 	loadMessages.emplace_back(text, replaceLast);
+	lastLoadMessage = text;
 
 	LOG("[LoadScreen::%s] text=\"%s\"", __func__, text.c_str());
 	LOG_CLEANUP();

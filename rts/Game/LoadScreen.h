@@ -33,6 +33,11 @@ public:
 	static bool CreateInstance(std::string&& mapFileName, std::string&& modFileName, ILoadSaveHandler* saveFile);
 	static void DeleteInstance();
 
+	// Opportunistic pump for long synchronous load steps that don't hit SetLoadMessage().
+	// Throttled to ~30Hz internally; safe to call hot, no-op off the main thread.
+	// Ticks WDT_MAIN, pumps SDL, redraws the load screen.
+	static void TickMain();
+
 	bool Draw() override;
 	bool Update() override;
 
@@ -48,6 +53,11 @@ private:
 	ILoadSaveHandler* saveFile;
 
 	std::vector< std::pair<std::string, bool> > loadMessages;
+
+	// Most recent SetLoadMessage text, cached for the Metal text overlay
+	// which paints it every frame while CFontTexture still targets GL.
+	// Updated under `mutex`.
+	std::string lastLoadMessage;
 
 	std::string mapFileName;
 	std::string modFileName;

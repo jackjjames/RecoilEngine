@@ -170,6 +170,13 @@ bool RmlGui::InitializeLua(lua_State* lua_state)
 		return false;
 	}
 
+	// Initialize() is a no-op on Metal (see the early-return in RmlGui::
+	// Initialize) which leaves `state` unallocated. Skip the rest of this
+	// function so the LuaHandle caller sees a clean failure instead of a
+	// null-deref on `state->ls = ...` during LuaUI bootstrap.
+	if (!RmlInitialized())
+		return false;
+
 	LOG_L(L_INFO, "[RmlGui::%s] Initializing RmlUi Lua Bindings", __func__);
 
 	sol::state_view lua(lua_state);

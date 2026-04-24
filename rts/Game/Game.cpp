@@ -47,6 +47,11 @@
 #include "Rendering/ModelsDataUploader.h"
 #include "Rendering/ShadowHandler.h"
 #include "Rendering/TeamHighlight.h"
+#if defined(RENDER_BACKEND_METAL)
+#include "Rendering/MetalSplashRenderer.h"
+#include "Rendering/MetalTextOverlay.h"
+#include "Rendering/MetalWorldDrawer.h"
+#endif
 #include "Rendering/Units/UnitDrawer.h"
 #include "Rendering/UniformConstants.h"
 #include "Rendering/Map/InfoTexture/IInfoTextureHandler.h"
@@ -1440,6 +1445,59 @@ bool CGame::UpdateUnsynced(const spring_time currentTime)
 
 
 bool CGame::Draw() {
+#if defined(RENDER_BACKEND_METAL)
+	// Stage 9 post-load scaffold. On Metal the GL-era drawers (minimap,
+	// guihandler, worldDrawer pipeline, shadow handler, info-texture
+	// handler, UI chrome) are intentionally null because each one pulls
+	// in FBOs / shader programs / GL texture objects we have not ported
+	// yet. Running the legacy Draw() below would null-deref inside
+	// UpdateUnsynced (guihandler->Update()) on the very first frame
+	// after load.
+	//
+	// Keep the game loop alive by presenting a placeholder frame each
+	// tick: SpringApp::Update already brackets this call with BeginFrame
+	// / PresentFrame (MTLLoadActionClear to black), so drawing a splash
+	// tile + "stage 9" text overlay inside gives us visible proof that
+	// load finished and the render thread is ticking. Sim + net keep
+	// running from CGame::Update; Draw() returning true here just tells
+	// SpringApp the frame is valid and should be presented.
+	//
+	// Each C3/C4/C5 slice replaces progressively more of this block
+	// with real Metal-backed drawers. The GL branch below is untouched.
+	//
+	// The world drawer is lazily constructed on first draw so the
+	// heightmap + render backend are guaranteed live when we sample
+	// them (readMap / globalRendering->renderBackend are both set up
+	// before CGame::Draw starts ticking).
+	static std::unique_ptr<MetalWorldDrawer> metalWorldDrawer;
+	static MetalSplashRenderer               loadTile;
+	static MetalTextOverlay                  textOverlay;
+	if (metalWorldDrawer == nullptr)
+		metalWorldDrawer = std::make_unique<MetalWorldDrawer>();
+
+	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
+	globalRendering->lastFrameStart = spring_gettime();
+
+	SetDrawMode(gameNormalDraw);
+
+	if (metalWorldDrawer && metalWorldDrawer->IsValid()) {
+		metalWorldDrawer->Draw();
+	} else {
+		// Fallback: keep the splash tile so the render thread still
+		// presents something visible if mesh / pipeline init failed.
+		loadTile.Draw();
+	}
+
+	char buf[128];
+	SNPRINTF(buf, sizeof(buf),
+		"stage 9 - frame %u - sim %d",
+		globalRendering->drawFrame, gs != nullptr ? gs->frameNum : -1);
+	textOverlay.DrawLine(-0.95f, -0.70f, 0.035f, buf);
+
+	SetDrawMode(gameNotDrawing);
+	lastDrawFrameTime = spring_gettime();
+	return true;
+#endif
 	const spring_time currentTimePreUpdate = spring_gettime();
 
 	if (UpdateUnsynced(currentTimePreUpdate))

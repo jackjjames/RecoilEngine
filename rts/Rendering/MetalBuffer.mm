@@ -64,6 +64,19 @@ public:
 		MetalGlobals::SetUniformBinding(slot, binding);
 	}
 
+	// Metal has a single MTLBuffer argument-table per stage; SSBO and UBO are
+	// the same object from the encoder's POV. Forward to the uniform path.
+	void BindStorageRange(uint32_t slot, size_t offset, size_t size) const override
+	{
+		BindUniformRange(slot, offset, size);
+	}
+
+	// Indirect-draw buffer is passed directly to [encoder drawPrimitives:
+	// indirectBuffer:] at draw time in MetalShaderPipeline; there is no
+	// separate "indirect" bind slot like GL has. This is a no-op -- callers
+	// hand the IBuffer to the draw method instead.
+	void BindIndirect() const override {}
+
 	void* GetMtlBuffer() const { return (__bridge void*)buffer; }
 
 private:

@@ -1552,8 +1552,9 @@ void CFontTexture::UploadGlyphAtlasTextureImpl()
 
 #if defined(RENDER_BACKEND_METAL)
 	// Metal has no glyph-atlas upload path yet; drop the atlas onto the floor
-	// for now (matched with the CreateTexture bypass above). The S8-C4
-	// follow-up replaces this with an MTLTexture + blit.
+	// and let MetalTextOverlay own load-screen text. Full CglFont Metal
+	// support lands with S9-C6 (RmlUI) / S10 (Lua gl.* shim) when the UI
+	// layer starts needing real font glyph textures again.
 	needsTextureUpload = false;
 	return;
 #endif

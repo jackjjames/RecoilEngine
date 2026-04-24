@@ -1,6 +1,7 @@
 /* This file is part of the Spring engine (GPL v2 or later), see LICENSE.html */
 
 #include <cstdint>
+#include <cstdlib>
 
 #include <SDL.h>
 
@@ -17,6 +18,8 @@
 
 #if defined(RENDER_BACKEND_METAL)
 #include "Rendering/MetalSplashRenderer.h"
+#include "Rendering/MetalTextOverlay.h"
+#include "System/Misc/SpringTime.h"
 #endif
 
 #ifndef HEADLESS
@@ -27,21 +30,57 @@ void ShowSplashScreen(
 ) {
 #if defined(RENDER_BACKEND_METAL)
 	// Metal splash path: textured full-screen quad via IShaderPipeline +
-	// IBuffer + ITexture. Font / version text lands in a later S8-C5
-	// sub-slice once CglFont has a Metal backend; for now the splash
-	// image alone replaces the all-black clear. The same renderer is
-	// reused by CLoadScreen::Draw so the load phase also shows a tile
-	// rather than a black window.
-	(void)springVersionStr;
+	// IBuffer + ITexture, plus a tiny 5x7 bitmap-font overlay for the
+	// version / license text. CglFont still targets GL and lands in a
+	// later S8-C5 sub-slice; MetalTextOverlay bridges the gap without
+	// touching the full font stack so the splash shows something readable
+	// instead of just a tile. The same renderers are reused by
+	// CLoadScreen::Draw so the load phase also shows progress.
 	MetalSplashRenderer splash(splashScreenFile);
+	MetalTextOverlay    textOverlay;
+
+	// Upper-case the version string in the overlay since the bitmap font
+	// folds lowercase to blanks today.
+	const std::string recoilLine = "RECOIL " + springVersionStr;
+	static constexpr const char* kLicenseLine =
+		"GNU GENERAL PUBLIC LICENSE - SEE DOC/LICENSE";
+
+	// Throttle the present loop. Unlike the GL SwapBuffers path (which
+	// blocks on vsync via the GL context), the Metal Begin/PresentFrame
+	// path currently spins as fast as the CPU feeds it and can saturate
+	// the GPU / command queue during the multi-second VFS scan. Cap at
+	// ~60fps until we wire proper displaySync handling through the
+	// Metal presenter.
+	constexpr unsigned minFrameMs = 16;
+	spring_time lastDraw = spring_gettime();
 
 	while (!testDoneFunc()) {
+		const spring_time now = spring_gettime();
+		const unsigned elapsed = spring_tomsecs(now - lastDraw);
+		if (elapsed < minFrameMs)
+			spring_sleep(spring_msecs(minFrameMs - elapsed));
+		lastDraw = spring_gettime();
+
 		globalRendering->BeginFrame();
 		splash.Draw();
+		// Bottom-left stack: version over license, roughly 2.5% of viewport
+		// height per glyph. Coordinates are in NDC with y-up origin.
+		constexpr float glyphH = 0.025f;
+		textOverlay.DrawLine(-0.95f, -0.90f + glyphH * 1.4f, glyphH, recoilLine);
+		textOverlay.DrawLine(-0.95f, -0.90f,                 glyphH, kLicenseLine);
 		globalRendering->PresentFrame(true, true);
 
+		// Pump SDL events so the OS does not mark the window as hung.
+		// Honor explicit close/quit now: the splash phase runs before
+		// the engine's main event loop is installed, so dropping these
+		// would leave the traffic-light buttons feeling dead.
 		SDL_Event event;
-		while (SDL_PollEvent(&event)) {}
+		while (SDL_PollEvent(&event)) {
+			if (event.type == SDL_QUIT ||
+			    (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE)) {
+				std::exit(0);
+			}
+		}
 		Watchdog::ClearTimer(WDT_MAIN);
 	}
 	return;

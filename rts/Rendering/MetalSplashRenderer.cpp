@@ -11,6 +11,7 @@
 #include "Rendering/Textures/Bitmap.h"
 #include "Rendering/Textures/ITexture.h"
 #include "Rendering/Textures/TextureCreationParams.hpp"
+#include "System/FileSystem/Misc.hpp"
 #include "System/Log/ILog.h"
 #include "System/type2.h"
 
@@ -57,11 +58,23 @@ MetalSplashRenderer::MetalSplashRenderer(const std::string& bitmapPath)
 	auto& backend = *globalRendering->renderBackend;
 
 	// --- Bitmap. CBitmap::Load forces RGBA8 by default (reqChannel=4).
-	// When no splash asset is found, AllocDummy a dim slate tile so the
-	// quad still exercises the pipeline and the window shows a visible
+	// If the caller did not supply a path, reuse the same splash lookup
+	// SpringApp performs for the initial splash (SplashScreenDir /
+	// exe-dir/base) so the load screen can show the BAR loadpicture too.
+	// When no asset is found, AllocDummy a dim slate tile so the quad
+	// still exercises the pipeline and the window shows a visible
 	// non-black signal.
+	std::string resolvedPath = bitmapPath;
+	if (resolvedPath.empty()) {
+		const auto candidates = FileSystemMisc::GetSplashScreenFiles();
+		if (!candidates.empty())
+			resolvedPath = candidates.front();
+	}
+
 	CBitmap bmp;
-	haveImage = !bitmapPath.empty() && bmp.Load(bitmapPath);
+	haveImage = !resolvedPath.empty() && bmp.Load(resolvedPath);
+	LOG_L(L_INFO, "[MetalSplashRenderer] path=\"%s\" haveImage=%d size=%dx%d",
+		resolvedPath.c_str(), int(haveImage), bmp.xsize, bmp.ysize);
 	if (!haveImage)
 		bmp.AllocDummy({64, 64, 80, 255});
 

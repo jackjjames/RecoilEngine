@@ -156,9 +156,16 @@ void CCamera::Update(const UpdateParams& p)
 	if (p.updateFrustum)
 		UpdateFrustum();
 
+#if !defined(RENDER_BACKEND_METAL)
+	// LoadMatrices uses deprecated fixed-function GL (glMatrixMode /
+	// glLoadMatrixf). On Metal these function pointers are never
+	// resolved (gladLoadGL is skipped) and calling them null-derefs.
+	// The matrices are consumed via GetViewProjectionMatrix() and the
+	// modern shader UBO path, not the legacy matrix stack.
 	LoadMatrices();
 	// not done here
 	// LoadViewPort();
+#endif
 }
 
 void CCamera::UpdateFrustum()

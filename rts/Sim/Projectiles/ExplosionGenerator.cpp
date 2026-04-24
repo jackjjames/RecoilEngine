@@ -16,6 +16,7 @@
 #include "Map/Ground.h"
 #include "Rendering/GroundFlash.h"
 #include "Rendering/Env/MapRendering.h"
+#include "Rendering/Env/Particles/ProjectileDrawer.h"
 #include "Rendering/Env/Particles/Classes/BubbleProjectile.h"
 #include "Rendering/Env/Particles/Classes/DirtProjectile.h"
 #include "Rendering/Env/Particles/Classes/ExploSpikeProjectile.h"
@@ -341,6 +342,31 @@ IExplosionGenerator* CExplosionGeneratorHandler::LoadGenerator(const char* tag, 
 		// custom EG's always have CEG_PREFIX_STRING in front
 		expGenHashIdentMap.emplace(hash, explGen->GetGeneratorID());
 		expGenIdentNameMap.emplace(explGen->GetGeneratorID(), key);
+
+		// Custom EG Load() parses the CEG script (gamedata/explosions/*.tdf)
+		// and for every projectile class it spawns resolves pointer
+		// members (texture, colormap, explosion generator, ...) via
+		// callbacks like `projectileDrawer->textureAtlas->GetTexturePtr`.
+		// projectileDrawer is null on Metal until the particle system
+		// is ported (S9-C5c), so running Load() would null-deref the
+		// first time any gadget calls Spring.SpawnCEG (BAR triggers
+		// this from game_commander_builder at f=60).
+		//
+		// The empty CCustomExplosionGenerator produced by skipping
+		// Load() still has a valid generator ID; subsequent
+		// Explosion() / GenExplosion() calls just iterate an empty
+		// projectile-spawn list and return false, which every caller
+		// handles. Unit gameplay (damage / spawning / commands)
+		// continues as normal; only the visual FX are missing.
+		//
+		// Unconditional (rather than #ifdef RENDER_BACKEND_METAL) so it
+		// lives in the engineSim translation unit, which is compiled
+		// without the Metal define. On GL projectileDrawer is non-null
+		// after CProjectileDrawer::InitStatic(), so this is effectively
+		// a no-op there.
+		if (projectileDrawer == nullptr) {
+			return explGen;
+		}
 
 		explGen->Load(this, sep + 1);
 	}

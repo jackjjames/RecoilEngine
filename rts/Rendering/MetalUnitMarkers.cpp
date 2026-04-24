@@ -10,6 +10,8 @@
 #include "Rendering/IBuffer.h"
 #include "Rendering/IRenderBackend.h"
 #include "Rendering/Shaders/IShaderPipeline.h"
+#include "Sim/Features/Feature.h"
+#include "Sim/Features/FeatureHandler.h"
 #include "Sim/Misc/Team.h"
 #include "Sim/Misc/TeamHandler.h"
 #include "Sim/Units/Unit.h"
@@ -208,6 +210,28 @@ void MetalUnitMarkers::Draw()
 		}
 		EmitUnit(verts, p, r, rC, gC, bC);
 	}
+
+	// Features (trees / rocks / wrecks). Draw these after units so a
+	// unit parked on top of a wreck stays legible. Use a desaturated
+	// grey-brown so they read as static scenery versus the bright
+	// team-coloured unit markers.
+	const auto& featureIDs = featureHandler.GetActiveFeatureIDs();
+	size_t featRemaining = (verts.size() / kVertsPerUnit >= kMaxUnits)
+		? 0
+		: (kMaxUnits - verts.size() / kVertsPerUnit);
+	size_t featEmitted = 0;
+	for (int id : featureIDs) {
+		if (featEmitted >= featRemaining)
+			break;
+		const CFeature* f = featureHandler.GetFeature(id);
+		if (f == nullptr)
+			continue;
+		const float3& p = f->pos;
+		const float r   = (f->radius > 0.0f) ? f->radius * 0.6f : 12.0f;
+		EmitUnit(verts, p, r, 150, 130, 100);
+		++featEmitted;
+	}
+
 	if (verts.empty())
 		return;
 

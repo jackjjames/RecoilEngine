@@ -1495,6 +1495,17 @@ bool CGame::Draw() {
 
 	SetDrawMode(gameNormalDraw);
 
+	// Drive the camera through the exact same path as the GL build:
+	// CCameraHandler::UpdateController -> active controller math ->
+	// eventHandler.Camera*Changed. It is pure math + events, no GL, so
+	// there is no reason to fork behaviour by backend here. The only
+	// Metal-specific piece is the rendering below; sim / input / camera
+	// stay identical between backends.
+	if (camHandler != nullptr && gu != nullptr)
+		camHandler->UpdateController(playerHandler.Player(gu->myPlayerNum), gu->fpsMode);
+	if (camera != nullptr)
+		camera->Update();
+
 	// Sky first: gl_Position.z = 1 keeps it behind everything and the
 	// fullscreen triangle fills pixels the terrain doesn't cover. The
 	// real CModernSky port (S9-C5b) replaces this.

@@ -49,6 +49,8 @@ private:
 	std::unique_ptr<ITexture>        heightmapTexture;
 
 	uint32_t indexCount       = 0;
+	int32_t  cachedCornersX   = 0;
+	int32_t  cachedCornersZ   = 0;
 	float    cachedMinHeight  = 0.0f;
 	float    cachedMaxHeight  = 0.0f;
 	bool     valid            = false;

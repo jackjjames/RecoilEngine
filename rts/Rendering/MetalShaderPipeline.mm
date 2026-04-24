@@ -262,8 +262,10 @@ private:
 	// (spirv-cross maps Vulkan descriptor set 0 bindings onto identical MTL
 	// buffer indices). Vertex buffers go onto metalVertexBufferBaseSlot + slot
 	// to match the MTLVertexDescriptor layout assignments. Sampled textures
-	// bind onto the fragment stage only (current callers are all fragment
-	// samplers; vertex-stage samplers can land with the unit drawer).
+	// bind onto both vertex + fragment stages: bindings declared in only one
+	// stage are silently ignored by the other, and the MetalWorldDrawer
+	// heightmap needs vertex-stage sampling for Y displacement. Cheap if the
+	// shader doesn't reference the texture.
 	void ApplyBindings(id<MTLRenderCommandEncoder> encoder)
 	{
 		[encoder setRenderPipelineState:pipelineState];
@@ -291,9 +293,11 @@ private:
 			if (binding.mtlTexture == nullptr)
 				continue;
 			auto tex = (__bridge id<MTLTexture>)binding.mtlTexture;
+			[encoder setVertexTexture:tex   atIndex:slot];
 			[encoder setFragmentTexture:tex atIndex:slot];
 			if (binding.mtlSampler != nullptr) {
 				auto samp = (__bridge id<MTLSamplerState>)binding.mtlSampler;
+				[encoder setVertexSamplerState:samp   atIndex:slot];
 				[encoder setFragmentSamplerState:samp atIndex:slot];
 			}
 		}

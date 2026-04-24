@@ -12,29 +12,36 @@
 #include "Rendering/IBuffer.h"
 #include "Rendering/IRenderBackend.h"
 #include "Rendering/Shaders/IShaderPipeline.h"
+#include "Rendering/Textures/ITexture.h"
+#include "Rendering/Textures/TextureCreationParams.hpp"
 #include "Sim/Misc/GlobalConstants.h"
 #include "System/Log/ILog.h"
 #include "System/Matrix44f.h"
+#include "System/type2.h"
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 
 namespace {
 
-struct WorldVertex { float x, y, z; };
+struct WorldVertex { float x, z; float u, v; };
 
-// Stride in corner samples. The corner heightmap is (mapx+1) x (mapy+1);
-// on a 10 km BAR map that's ~1025 x 1025 = ~1M verts, which is overkill
-// for a first-pass visual. We subsample to stay in the ~16-64k vertex
-// range so the buffer fits comfortably in a single MTLBuffer and the
-// draw cost stays a rounding error; SMFGroundDrawer's real LOD system
-// lands with C3c.
-constexpr int kTargetVertsAcross = 192;
+// Mesh resolution (grid vertices across). Decoupled from the corner
+// heightmap density: the vertex shader samples the R32F heightmap at
+// (u, v) to get Y. 193x193 = ~37k verts, ~73k triangles - a rounding
+// error for Metal on Apple silicon and well below what the GL backend
+// rasterises for BAR's SMFGroundDrawer. SMF's real LOD lands with
+// C3c; this stays static until then.
+constexpr int kGridVertsAcross = 193;
+
+constexpr uint32_t kGL_R32F = 0x822E;
 
 constexpr const char* kVertexGlsl = R"(#version 450
-layout(location = 0) in vec3 aPos;
+layout(location = 0) in vec2 aPosXZ;
+layout(location = 1) in vec2 aUV;
 layout(location = 0) out vec3 vWorldPos;
 
 layout(set = 0, binding = 0) uniform CameraUBO {
@@ -42,9 +49,15 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     vec4 uMinHeight_MaxHeight_Unused_Unused;
 } ubo;
 
+layout(set = 0, binding = 1) uniform sampler2D uHeight;
+
 void main() {
-    vWorldPos = aPos;
-    gl_Position = ubo.uViewProj * vec4(aPos, 1.0);
+    // textureLod keeps the sample deterministic regardless of any
+    // implicit LOD the driver would pick for vertex-stage sampling.
+    float h = textureLod(uHeight, aUV, 0.0).r;
+    vec3 world = vec3(aPosXZ.x, h, aPosXZ.y);
+    vWorldPos = world;
+    gl_Position = ubo.uViewProj * vec4(world, 1.0);
 }
 )";
 
@@ -57,6 +70,8 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     vec4 uMinHeight_MaxHeight_Unused_Unused;
 } ubo;
 
+layout(set = 0, binding = 1) uniform sampler2D uHeight;
+
 void main() {
     // Height-banded grayscale + a cheap checkerboard so the mesh
     // structure is legible without lighting. Replaced by the real
@@ -65,13 +80,12 @@ void main() {
     float maxH = ubo.uMinHeight_MaxHeight_Unused_Unused.y;
     float t = clamp((vWorldPos.y - minH) / max(maxH - minH, 1.0), 0.0, 1.0);
 
-    vec3 lo = vec3(0.18, 0.22, 0.30); // underwater-ish
-    vec3 mid = vec3(0.35, 0.45, 0.30); // lowland
-    vec3 hi = vec3(0.85, 0.82, 0.75); // peaks
+    vec3 lo = vec3(0.18, 0.22, 0.30);
+    vec3 mid = vec3(0.35, 0.45, 0.30);
+    vec3 hi = vec3(0.85, 0.82, 0.75);
     vec3 col = mix(lo, mid, smoothstep(0.0, 0.35, t));
     col = mix(col, hi, smoothstep(0.45, 0.9, t));
 
-    // 128-unit checker in world XZ to make the grid readable.
     vec2 g = floor(vWorldPos.xz / 128.0);
     float checker = mod(g.x + g.y, 2.0);
     col *= mix(0.9, 1.1, checker);
@@ -87,78 +101,45 @@ struct alignas(16) CameraUBOLayout {
 };
 
 
-// Build a subsampled triangle-list heightmap mesh. Returns true on
-// success; `verts` is (X, h, Z) in world units, `indices` is a
-// uint32 triangle list wound CCW when viewed from above (+Y).
-bool BuildMesh(std::vector<WorldVertex>& verts, std::vector<uint32_t>& indices,
-               float& minHOut, float& maxHOut)
+// Build a flat XZ grid mesh that covers the full map footprint. Heights
+// are resolved in the vertex shader by sampling uHeight at aUV, so the
+// vertex buffer carries XZ + UV only. Returns true on success.
+bool BuildGridMesh(std::vector<WorldVertex>& verts, std::vector<uint32_t>& indices)
 {
-	if (readMap == nullptr)
+	const int vertsX = kGridVertsAcross;
+	const int vertsZ = kGridVertsAcross;
+	if (vertsX < 2 || vertsZ < 2)
 		return false;
 
-	const float* hmap = readMap->GetCornerHeightMapUnsynced();
-	if (hmap == nullptr)
-		return false;
+	const float mapWidth  = static_cast<float>(mapDims.mapx) * SQUARE_SIZE;
+	const float mapDepth  = static_cast<float>(mapDims.mapy) * SQUARE_SIZE;
 
-	const int cornersX = mapDims.mapxp1;
-	const int cornersZ = mapDims.mapyp1;
-	if (cornersX <= 1 || cornersZ <= 1)
-		return false;
-
-	const int strideX = std::max(1, cornersX / kTargetVertsAcross);
-	const int strideZ = std::max(1, cornersZ / kTargetVertsAcross);
-
-	// Sample grid: include every strideX-th corner; force-include the
-	// last corner so the mesh covers the full map width / depth rather
-	// than snapping to an interior line.
-	std::vector<int> sampleX;
-	std::vector<int> sampleZ;
-	sampleX.reserve(cornersX / strideX + 2);
-	sampleZ.reserve(cornersZ / strideZ + 2);
-	for (int x = 0; x < cornersX; x += strideX)
-		sampleX.push_back(x);
-	if (sampleX.back() != cornersX - 1)
-		sampleX.push_back(cornersX - 1);
-	for (int z = 0; z < cornersZ; z += strideZ)
-		sampleZ.push_back(z);
-	if (sampleZ.back() != cornersZ - 1)
-		sampleZ.push_back(cornersZ - 1);
-
-	const size_t nx = sampleX.size();
-	const size_t nz = sampleZ.size();
-	verts.resize(nx * nz);
-
-	float minH =  std::numeric_limits<float>::max();
-	float maxH = -std::numeric_limits<float>::max();
-
-	for (size_t j = 0; j < nz; ++j) {
-		const int sz = sampleZ[j];
-		for (size_t i = 0; i < nx; ++i) {
-			const int sx = sampleX[i];
-			const float h = hmap[sz * cornersX + sx];
-			verts[j * nx + i] = {
-				static_cast<float>(sx) * SQUARE_SIZE,
-				h,
-				static_cast<float>(sz) * SQUARE_SIZE,
+	verts.resize(vertsX * vertsZ);
+	for (int j = 0; j < vertsZ; ++j) {
+		// Parametric [0, 1] across the grid for both world-space XZ and
+		// heightmap UV sampling; the texture is clamp-to-edge so the
+		// outermost ring snaps to the corner row/column (GL and Metal
+		// agree here).
+		const float tz = static_cast<float>(j) / static_cast<float>(vertsZ - 1);
+		for (int i = 0; i < vertsX; ++i) {
+			const float tx = static_cast<float>(i) / static_cast<float>(vertsX - 1);
+			verts[j * vertsX + i] = {
+				tx * mapWidth,
+				tz * mapDepth,
+				tx,
+				tz,
 			};
-			minH = std::min(minH, h);
-			maxH = std::max(maxH, h);
 		}
 	}
-	minHOut = minH;
-	maxHOut = maxH;
 
 	indices.clear();
-	indices.reserve((nx - 1) * (nz - 1) * 6);
+	indices.reserve((vertsX - 1) * (vertsZ - 1) * 6);
 
-	// Two triangles per quad. Winding: viewed from +Y (above), BAR/Recoil
-	// treats CCW as front-facing in the GL backend. Metal without an
-	// explicit cullMode defaults to no culling so this winding choice
-	// is cosmetic until S9-C3c wires a depth/cull state.
-	for (uint32_t j = 0; j + 1 < nz; ++j) {
-		for (uint32_t i = 0; i + 1 < nx; ++i) {
-			const uint32_t row0 = j * static_cast<uint32_t>(nx);
-			const uint32_t row1 = (j + 1) * static_cast<uint32_t>(nx);
+	// Two triangles per quad, CCW when viewed from +Y.
+	for (uint32_t j = 0; j + 1 < static_cast<uint32_t>(vertsZ); ++j) {
+		for (uint32_t i = 0; i + 1 < static_cast<uint32_t>(vertsX); ++i) {
+			const uint32_t row0 = j * static_cast<uint32_t>(vertsX);
+			const uint32_t row1 = (j + 1) * static_cast<uint32_t>(vertsX);
 			const uint32_t v00 = row0 + i;
 			const uint32_t v10 = row0 + i + 1;
 			const uint32_t v01 = row1 + i;
@@ -177,6 +158,27 @@ bool BuildMesh(std::vector<WorldVertex>& verts, std::vector<uint32_t>& indices,
 	return true;
 }
 
+// Compute min/max height over the corner heightmap for the UBO so the
+// fragment stage can band-colour against true map extents.
+bool ComputeHeightRange(const float* hmap, int cornersX, int cornersZ, float& minHOut, float& maxHOut)
+{
+	if (hmap == nullptr || cornersX <= 0 || cornersZ <= 0)
+		return false;
+
+	float minH =  std::numeric_limits<float>::max();
+	float maxH = -std::numeric_limits<float>::max();
+
+	const size_t n = static_cast<size_t>(cornersX) * static_cast<size_t>(cornersZ);
+	for (size_t k = 0; k < n; ++k) {
+		const float h = hmap[k];
+		if (h < minH) minH = h;
+		if (h > maxH) maxH = h;
+	}
+	minHOut = minH;
+	maxHOut = maxH;
+	return true;
+}
+
 } // namespace
 
 
@@ -186,19 +188,35 @@ MetalWorldDrawer::MetalWorldDrawer()
 		LOG_L(L_WARNING, "[MetalWorldDrawer] no render backend");
 		return;
 	}
+	if (readMap == nullptr) {
+		LOG_L(L_WARNING, "[MetalWorldDrawer] readMap unavailable; drawer disabled");
+		return;
+	}
 	auto& backend = *globalRendering->renderBackend;
 
-	std::vector<WorldVertex> verts;
-	std::vector<uint32_t>    indices;
-	float minH = 0.0f;
-	float maxH = 0.0f;
-	if (!BuildMesh(verts, indices, minH, maxH)) {
+	const float* hmap = readMap->GetCornerHeightMapUnsynced();
+	const int cornersX = mapDims.mapxp1;
+	const int cornersZ = mapDims.mapyp1;
+	if (hmap == nullptr || cornersX <= 1 || cornersZ <= 1) {
 		LOG_L(L_WARNING, "[MetalWorldDrawer] heightmap unavailable; drawer disabled");
 		return;
 	}
+
+	// --- Flat grid mesh (XZ + UV only).
+	std::vector<WorldVertex> verts;
+	std::vector<uint32_t>    indices;
+	if (!BuildGridMesh(verts, indices)) {
+		LOG_L(L_WARNING, "[MetalWorldDrawer] mesh build failed");
+		return;
+	}
 	indexCount = static_cast<uint32_t>(indices.size());
-	LOG("[MetalWorldDrawer] mesh verts=%zu indices=%u minH=%.1f maxH=%.1f",
-		verts.size(), indexCount, minH, maxH);
+
+	float minH = 0.0f;
+	float maxH = 0.0f;
+	ComputeHeightRange(hmap, cornersX, cornersZ, minH, maxH);
+
+	LOG("[MetalWorldDrawer] grid verts=%zu indices=%u corners=%dx%d minH=%.1f maxH=%.1f",
+		verts.size(), indexCount, cornersX, cornersZ, minH, maxH);
 
 	vertexBuffer = backend.CreateBuffer(verts.size() * sizeof(WorldVertex), verts.data());
 	if (!vertexBuffer || !vertexBuffer->IsValid()) {
@@ -212,8 +230,23 @@ MetalWorldDrawer::MetalWorldDrawer()
 		return;
 	}
 
+	// --- R32F heightmap texture uploaded at full corner resolution.
+	// Vertex shader samples with linear filtering so the displaced mesh
+	// interpolates smoothly between corner samples; clamp-to-edge on the
+	// outer ring avoids wrap artefacts at the seams.
+	GL::TextureCreationParams tcp;
+	tcp.linearTextureFilter = true;
+	tcp.linearMipMapFilter  = false;
+	tcp.reqNumLevels = 1;
+	heightmapTexture = backend.CreateTexture2D(int2(cornersX, cornersZ), kGL_R32F, tcp, /*wantCompress=*/false);
+	if (!heightmapTexture || !heightmapTexture->IsValid()) {
+		LOG_L(L_ERROR, "[MetalWorldDrawer] heightmap texture creation failed");
+		return;
+	}
+	heightmapTexture->UploadImage(hmap);
+
+	// --- Uniform buffer (viewProj + height range).
 	CameraUBOLayout seedUbo{};
-	// Identity ViewProj until Draw() fills this in from the active camera.
 	seedUbo.viewProj[0]  = 1.0f;
 	seedUbo.viewProj[5]  = 1.0f;
 	seedUbo.viewProj[10] = 1.0f;
@@ -226,12 +259,14 @@ MetalWorldDrawer::MetalWorldDrawer()
 		return;
 	}
 
+	// --- Pipeline. Interleaved vec2 XZ + vec2 UV.
 	PipelineDesc pd;
 	pd.name = "world_ground_terrain";
 	pd.vertexSource   = kVertexGlsl;
 	pd.fragmentSource = kFragmentGlsl;
 	pd.vertexAttributes = {
-		VertexAttribute{ .location = 0, .bufferSlot = 0, .offset = 0, .format = VertexFormat::Float3 },
+		VertexAttribute{ .location = 0, .bufferSlot = 0, .offset = 0,                 .format = VertexFormat::Float2 },
+		VertexAttribute{ .location = 1, .bufferSlot = 0, .offset = sizeof(float) * 2, .format = VertexFormat::Float2 },
 	};
 	pd.vertexBindings = {
 		VertexBindingLayout{ .slot = 0, .stride = sizeof(WorldVertex) },
@@ -274,6 +309,7 @@ void MetalWorldDrawer::Draw() const
 
 	pipeline->Enable();
 	pipeline->BindUniformBuffer(0, *uniformBuffer, 0, sizeof(ubo));
+	pipeline->BindTexture(1, *heightmapTexture);
 	pipeline->BindVertexBuffer(0, *vertexBuffer);
 	pipeline->DrawIndexed(PrimitiveTopology::Triangles, indexCount, IndexType::Uint32, *indexBuffer);
 	pipeline->Disable();

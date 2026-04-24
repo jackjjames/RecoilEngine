@@ -27,6 +27,7 @@
 namespace {
 constexpr uint32_t kGL_R8     = 0x8229;
 constexpr uint32_t kGL_RG8    = 0x822B;
+constexpr uint32_t kGL_R32F   = 0x822E;
 constexpr uint32_t kGL_RGB8   = 0x8051;
 constexpr uint32_t kGL_RGBA8  = 0x8058;
 constexpr uint32_t kGL_SRGB8  = 0x8C41;
@@ -43,6 +44,7 @@ MtlFormatInfo MapGlInternalFormat(uint32_t internalFormat)
 	switch (internalFormat) {
 		case kGL_R8:            return { MTLPixelFormatR8Unorm,      1 };
 		case kGL_RG8:           return { MTLPixelFormatRG8Unorm,     2 };
+		case kGL_R32F:          return { MTLPixelFormatR32Float,     4 };
 		case kGL_RGBA8:         return { MTLPixelFormatRGBA8Unorm,   4 };
 		case kGL_SRGB8_ALPHA8:  return { MTLPixelFormatRGBA8Unorm_sRGB, 4 };
 		// RGB8 has no native Metal counterpart; upload path pads to RGBA.

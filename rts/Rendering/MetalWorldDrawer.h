@@ -9,13 +9,15 @@
 
 class IBuffer;
 class IShaderPipeline;
+class ITexture;
 
 // Stage 9 minimum-viable world drawer for the Metal backend. Builds a
-// subsampled heightmap mesh (one vertex per N×N corner block) from
-// CReadMap::GetCornerHeightMapUnsynced on construction, compiles a
-// matmul + height-shaded pipeline through the shared glslang /
-// spirv-cross path, and issues one indexed draw per frame using the
-// active camera's view-projection matrix.
+// flat XZ grid mesh at a fixed resolution and displaces Y in the
+// vertex stage by sampling an R32F heightmap texture uploaded from
+// CReadMap::GetCornerHeightMapUnsynced. Mesh density is decoupled
+// from corner-heightmap density so later slices can swap in higher-
+// res grids (or drop to a coarser grid on MBP integrated GPUs)
+// without touching the map-data path.
 //
 // Deliberately skips everything SMFGroundDrawer does beyond producing
 // geometry on screen: no SMF tile textures, no shadow pass, no detail
@@ -44,6 +46,7 @@ private:
 	std::unique_ptr<IBuffer>         vertexBuffer;
 	std::unique_ptr<IBuffer>         indexBuffer;
 	std::unique_ptr<IBuffer>         uniformBuffer;
+	std::unique_ptr<ITexture>        heightmapTexture;
 
 	uint32_t indexCount       = 0;
 	float    cachedMinHeight  = 0.0f;

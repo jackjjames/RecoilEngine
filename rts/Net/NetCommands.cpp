@@ -462,19 +462,32 @@ void CGame::ClientReadNet()
 					CPlayer* player = playerHandler.Player(playerID);
 					pckt >> player->name;
 
-#if defined(RENDER_BACKEND_METAL)
-					// Metal currently has no clickable UI to pick a start
-					// position, so a script with startPosType=ChooseInGame
-					// never transitions the player to ready and the server
-					// never fires NETMSG_STARTPLAYING - sim stays at frame
-					// -1 forever. Force-ready the local player here so we
-					// can observe the running sim while the real Rml/LuaUI
-					// chrome is being ported (S9-C6).
-					player->SetReadyToStart(true);
-#else
 					player->SetReadyToStart(gameSetup->startPosType != CGameSetup::StartPos_ChooseInGame);
-#endif
 					player->active = true;
+
+#if defined(RENDER_BACKEND_METAL)
+					// Metal currently has no clickable UI (no CStartPosSelecter
+					// draw/input path, no Rml/LuaUI ready button), so a script
+					// with startPosType=ChooseInGame never sees the client send
+					// NETMSG_STARTPOS and the server never marks our player
+					// ready -> no NETMSG_STARTPLAYING, sim frame stays at -1
+					// forever.
+					//
+					// Mirror what CStartPosSelecter::Ready(false) would do on
+					// the GL path: send a NETMSG_STARTPOS with RDYSTATE_READIED
+					// using the team's configured start position. The server
+					// flips our ready bit for real and advances the sim.
+					//
+					// Only fire for our local player; NETMSG_PLAYERNAME fans
+					// out for every connecting player. Goes away with the real
+					// S9-C6 RmlUI port.
+					if (gu != nullptr && playerID == gu->myPlayerNum && teamHandler.IsValidTeam(gu->myTeam)) {
+						const CTeam* mt = teamHandler.Team(gu->myTeam);
+						const float3& sp = mt->GetStartPos();
+						clientNet->Send(CBaseNetProtocol::Get().SendStartPos(
+							gu->myPlayerNum, gu->myTeam, CPlayer::PLAYER_RDYSTATE_READIED, sp.x, sp.y, sp.z));
+					}
+#endif
 
 					wordCompletion.AddWord(player->name, false, false, false); // required?
 					AddTraffic(playerID, packetCode, dataLength);

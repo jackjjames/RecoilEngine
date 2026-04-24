@@ -27,7 +27,13 @@ public:
 	//static void UpdateStatic(); //use base
 public:
 	// Interface with CUnitDrawerData
-	static void UpdateGhostedBuildings() { modelDrawerData->UpdateGhostedBuildings(); }
+	// Sim-side: CGame::SimFrame() calls this after losHandler->Update() so
+	// dead-building ghosts track current LOS. modelDrawerData is null when
+	// the renderer has not been constructed (Metal backend pre-S9-C4), so
+	// skip the bookkeeping rather than null-deref. The ghost list is only
+	// consumed by the unit drawer itself, so skipping is a no-op for any
+	// build that also lacks a live drawer.
+	static void UpdateGhostedBuildings() { if (modelDrawerData != nullptr) modelDrawerData->UpdateGhostedBuildings(); }
 
 	static uint32_t GetUnitDefImage(const UnitDef* ud) { return modelDrawerData->GetUnitDefImage(ud); }
 	static void SetUnitDefImage(const UnitDef* unitDef, const std::string& texName) { return modelDrawerData->SetUnitDefImage(unitDef, texName); }

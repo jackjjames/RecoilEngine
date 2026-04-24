@@ -184,6 +184,19 @@ void MetalUnitMarkers::Draw()
 	if (active.empty())
 		return;
 
+	// One-shot: log once when units first appear so it's obvious whether
+	// the sim is streaming them + markers are being emitted. Drops to
+	// silent after the first non-empty frame.
+	static bool loggedFirstUnits = false;
+	if (!loggedFirstUnits) {
+		loggedFirstUnits = true;
+		const CUnit* u0 = active.front();
+		LOG("[MetalUnitMarkers] first frame with units: count=%zu, u0.pos=(%.1f,%.1f,%.1f) radius=%.1f team=%d",
+			active.size(),
+			u0 ? u0->pos.x : 0.0f, u0 ? u0->pos.y : 0.0f, u0 ? u0->pos.z : 0.0f,
+			u0 ? u0->radius : 0.0f, u0 ? u0->team : -1);
+	}
+
 	// --- Build per-frame vertex stream. Units with no radius (defaults
 	// to SolidObject::radius which is set post-construction) still get
 	// a sensible fallback so commanders + rez-pending units don't

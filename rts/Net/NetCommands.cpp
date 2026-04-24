@@ -462,7 +462,18 @@ void CGame::ClientReadNet()
 					CPlayer* player = playerHandler.Player(playerID);
 					pckt >> player->name;
 
+#if defined(RENDER_BACKEND_METAL)
+					// Metal currently has no clickable UI to pick a start
+					// position, so a script with startPosType=ChooseInGame
+					// never transitions the player to ready and the server
+					// never fires NETMSG_STARTPLAYING - sim stays at frame
+					// -1 forever. Force-ready the local player here so we
+					// can observe the running sim while the real Rml/LuaUI
+					// chrome is being ported (S9-C6).
+					player->SetReadyToStart(true);
+#else
 					player->SetReadyToStart(gameSetup->startPosType != CGameSetup::StartPos_ChooseInGame);
+#endif
 					player->active = true;
 
 					wordCompletion.AddWord(player->name, false, false, false); // required?

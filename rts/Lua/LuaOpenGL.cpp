@@ -362,9 +362,39 @@ bool LuaOpenGL::PushEntries(lua_State* L)
 #undef LUA_GL_ENTRY
 #undef LUA_GL_ENTRY_IF
 
+	// Register every entry: enabled ones get their real implementation,
+	// disabled ones get a no-op stub. BAR (and many other games) load
+	// gadgets that reference legacy GL APIs at file scope - e.g.
+	// unit_seismic_ping.lua calls gl.CreateList during chunk load. If
+	// those functions aren't registered at all, the gadget errors out
+	// with "attempt to call a nil value" and takes out the entire
+	// synced LuaRules environment, which cascades to commanders never
+	// being spawned, ResourceHandler never running, etc. Registering
+	// the stub keeps the gadget loadable; its drawing calls become
+	// no-ops (which is fine because legacy immediate-mode rendering
+	// has no representation in Metal / modern GL pipelines anyway)
+	// while its game-logic callbacks (GameFrame, UnitCreated, ...)
+	// still get a chance to run.
+	//
+	// Stub semantics:
+	//   - any CreateXXX-style call returns an integer 0 so callers who
+	//     store the result into a "list / shader / query id" slot still
+	//     get a number rather than nil (common gadget pattern is
+	//     gl.CallList(list) later, which is itself stubbed).
+	//   - arguments that are functions are NOT invoked; if a gadget
+	//     had meaningful Lua-side side effects inside a gl.BeginEnd
+	//     callback that actually moves game state we'd need per-fn
+	//     special cases, but no BAR gadget currently does so. Trace
+	//     the first such regression and add a targeted hook then.
+	auto luaGLCompatNoOp = +[](lua_State* LS) -> int {
+		lua_pushinteger(LS, 0);
+		return 1;
+	};
 	for (const auto& entry: entries) {
 		if (entry.enabled)
 			LuaPushRawNamedCFunc(L, entry.name, entry.func);
+		else
+			LuaPushRawNamedCFunc(L, entry.name, luaGLCompatNoOp);
 	}
 
 	if (caps.shaders && canUseShaders)

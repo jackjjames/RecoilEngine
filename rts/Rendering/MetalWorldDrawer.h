@@ -47,6 +47,13 @@ private:
 	std::unique_ptr<IBuffer>         indexBuffer;
 	std::unique_ptr<IBuffer>         uniformBuffer;
 	std::unique_ptr<ITexture>        heightmapTexture;
+	// Full-map diffuse surrogate: the SMF-embedded minimap (top mip,
+	// 1024x1024 RGBA8, decompressed from DXT1 at load time). Stands in
+	// for the real SMFGroundTextures tile stream until S9-C3b part 2
+	// ports CSMFGroundTextures to IRenderBackend. Sampled at normalised
+	// (u,v) in the fragment shader, so the whole map footprint is
+	// covered and the view looks like an actual BAR map.
+	std::unique_ptr<ITexture>        diffuseTexture;
 
 	uint32_t indexCount       = 0;
 	int32_t  cachedCornersX   = 0;

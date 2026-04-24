@@ -8,6 +8,9 @@
 #include "Game/CameraHandler.h"
 #include "Map/MapDimensions.h"
 #include "Map/ReadMap.h"
+#include "Map/SMF/SMFFormat.h"
+#include "Map/SMF/SMFMapFile.h"
+#include "Map/SMF/SMFReadMap.h"
 #include "Rendering/Env/ISky.h"
 #include "Rendering/Env/SkyLight.h"
 #include "Rendering/GlobalRendering.h"
@@ -40,7 +43,12 @@ struct WorldVertex { float x, z; float u, v; };
 // C3c; this stays static until then.
 constexpr int kGridVertsAcross = 193;
 
-constexpr uint32_t kGL_R32F = 0x822E;
+constexpr uint32_t kGL_R32F  = 0x822E;
+constexpr uint32_t kGL_RGBA8 = 0x8058;
+
+// Minimap mip 0 is 1024x1024 (DXT1). 128x128 blocks, 8 bytes each.
+constexpr int      kMinimapMip0Size = 1024;
+constexpr size_t   kMinimapMip0Bytes = (kMinimapMip0Size / 4) * (kMinimapMip0Size / 4) * 8;
 
 constexpr const char* kVertexGlsl = R"(#version 450
 layout(location = 0) in vec2 aPosXZ;
@@ -75,12 +83,13 @@ layout(location = 0) out vec4 fragColor;
 
 layout(set = 0, binding = 0) uniform CameraUBO {
     mat4 uViewProj;
-    vec4 uMinHeight_MaxHeight_Unused_Unused;
+    vec4 uMinHeight_MaxHeight_HaveDiffuse_Unused;
     vec4 uSunDirXYZ_SquareSize;
     vec4 uCornerSizeXY_InvCornerSizeXY;
 } ubo;
 
 layout(set = 0, binding = 1) uniform sampler2D uHeight;
+layout(set = 0, binding = 2) uniform sampler2D uDiffuse;
 
 // Build a world-space normal from the heightmap by central-differencing
 // four neighbour samples in UV space. The world-space step for one
@@ -101,15 +110,27 @@ vec3 ComputeTerrainNormal(vec2 uv)
 }
 
 void main() {
-    float minH = ubo.uMinHeight_MaxHeight_Unused_Unused.x;
-    float maxH = ubo.uMinHeight_MaxHeight_Unused_Unused.y;
-    float t = clamp((vWorldPos.y - minH) / max(maxH - minH, 1.0), 0.0, 1.0);
-
-    vec3 lo = vec3(0.14, 0.20, 0.30);  // underwater-ish
-    vec3 mid = vec3(0.30, 0.40, 0.22); // lowland
-    vec3 hi = vec3(0.82, 0.80, 0.72);  // peaks
-    vec3 albedo = mix(lo, mid, smoothstep(0.00, 0.30, t));
-    albedo = mix(albedo, hi, smoothstep(0.55, 0.95, t));
+    // Albedo: sample the SMF minimap as a full-map diffuse surrogate
+    // (top mip 1024x1024, decompressed from the .smf's built-in DXT1
+    // minimap at load time). uv is already normalised [0,1] across the
+    // whole map by MetalWorldDrawer::BuildGridMesh, so the per-pixel
+    // sample = colour at that world XZ. When no minimap is available
+    // (haveDiffuse == 0) fall back to a hypsometric band so the mesh
+    // is still readable.
+    float haveDiffuse = ubo.uMinHeight_MaxHeight_HaveDiffuse_Unused.z;
+    vec3 albedo;
+    if (haveDiffuse > 0.5) {
+        albedo = texture(uDiffuse, vUV).rgb;
+    } else {
+        float minH = ubo.uMinHeight_MaxHeight_HaveDiffuse_Unused.x;
+        float maxH = ubo.uMinHeight_MaxHeight_HaveDiffuse_Unused.y;
+        float t = clamp((vWorldPos.y - minH) / max(maxH - minH, 1.0), 0.0, 1.0);
+        vec3 lo = vec3(0.14, 0.20, 0.30);
+        vec3 mid = vec3(0.30, 0.40, 0.22);
+        vec3 hi = vec3(0.82, 0.80, 0.72);
+        albedo = mix(lo, mid, smoothstep(0.00, 0.30, t));
+        albedo = mix(albedo, hi, smoothstep(0.55, 0.95, t));
+    }
 
     // Lambertian + constant ambient, sun direction is world-space "to the
     // light". Half-Lambert blend keeps slopes from pitch-black, which
@@ -121,14 +142,8 @@ void main() {
     float diffuse = clamp(half_lambert, 0.0, 1.0);
 
     vec3 sunColor = vec3(1.00, 0.96, 0.88);
-    vec3 ambColor = vec3(0.28, 0.30, 0.38);
+    vec3 ambColor = vec3(0.35, 0.38, 0.45);
     vec3 col = albedo * (sunColor * diffuse + ambColor);
-
-    // Faint 128-unit grid so the mesh structure stays legible until the
-    // real SMF tile textures land (C3b).
-    vec2 g = floor(vWorldPos.xz / 128.0);
-    float checker = mod(g.x + g.y, 2.0);
-    col *= mix(0.96, 1.04, checker);
 
     fragColor = vec4(col, 1.0);
 }
@@ -137,10 +152,104 @@ void main() {
 
 struct alignas(16) CameraUBOLayout {
 	float viewProj[16];
-	float params[4];            // minHeight, maxHeight, 0, 0
+	float params[4];            // minHeight, maxHeight, haveDiffuse(0/1), 0
 	float sunDirAndSquare[4];   // sun.xyz, SQUARE_SIZE
 	float cornerSize[4];        // cornersX, cornersZ, 1/cornersX, 1/cornersZ
 };
+
+
+// Decompress one BC1 (DXT1) 4x4 block to RGBA8. 8 input bytes -> 64
+// output bytes laid out as four rows of 4 RGBA pixels. Minimaps use
+// opaque 4-colour mode; the 3-colour / 1-bit alpha variant is still
+// handled for robustness because some tooling emits it. Self-contained
+// so it can disappear when the real SMFGroundTextures tile decoder
+// (which in the GL path goes straight through glCompressedTexImage2D
+// without a CPU decompression step) lands on Metal.
+void DecompressBC1Block(const uint8_t* src, uint8_t* dst, int dstStride)
+{
+	const uint16_t c0 = static_cast<uint16_t>(src[0] | (src[1] << 8));
+	const uint16_t c1 = static_cast<uint16_t>(src[2] | (src[3] << 8));
+
+	auto unpack565 = [](uint16_t c, uint8_t out[4]) {
+		const uint32_t r5 = (c >> 11) & 0x1F;
+		const uint32_t g6 = (c >>  5) & 0x3F;
+		const uint32_t b5 = (c      ) & 0x1F;
+		out[0] = static_cast<uint8_t>((r5 * 255 + 15) / 31);
+		out[1] = static_cast<uint8_t>((g6 * 255 + 31) / 63);
+		out[2] = static_cast<uint8_t>((b5 * 255 + 15) / 31);
+		out[3] = 255;
+	};
+
+	uint8_t palette[4][4];
+	unpack565(c0, palette[0]);
+	unpack565(c1, palette[1]);
+
+	if (c0 > c1) {
+		for (int k = 0; k < 3; ++k) {
+			palette[2][k] = static_cast<uint8_t>((2 * palette[0][k] + palette[1][k]) / 3);
+			palette[3][k] = static_cast<uint8_t>((palette[0][k] + 2 * palette[1][k]) / 3);
+		}
+		palette[2][3] = 255;
+		palette[3][3] = 255;
+	} else {
+		for (int k = 0; k < 3; ++k) {
+			palette[2][k] = static_cast<uint8_t>((palette[0][k] + palette[1][k]) / 2);
+			palette[3][k] = 0;
+		}
+		palette[2][3] = 255;
+		palette[3][3] = 0;
+	}
+
+	const uint32_t indices = static_cast<uint32_t>(src[4])
+	                      | (static_cast<uint32_t>(src[5]) <<  8)
+	                      | (static_cast<uint32_t>(src[6]) << 16)
+	                      | (static_cast<uint32_t>(src[7]) << 24);
+
+	for (int y = 0; y < 4; ++y) {
+		uint8_t* row = dst + y * dstStride;
+		for (int x = 0; x < 4; ++x) {
+			const uint32_t bit = (indices >> (2 * (4 * y + x))) & 0x3u;
+			row[x * 4 + 0] = palette[bit][0];
+			row[x * 4 + 1] = palette[bit][1];
+			row[x * 4 + 2] = palette[bit][2];
+			row[x * 4 + 3] = palette[bit][3];
+		}
+	}
+}
+
+// Decompress a packed stream of BC1 blocks (row-major, 4x4 blocks
+// across) to an RGBA8 image of size width x height.
+void DecompressBC1Image(const uint8_t* src, uint8_t* dst, int width, int height)
+{
+	const int blocksX = width  / 4;
+	const int blocksY = height / 4;
+	const int dstStride = width * 4;
+
+	for (int by = 0; by < blocksY; ++by) {
+		for (int bx = 0; bx < blocksX; ++bx) {
+			const uint8_t* blk = src + ((by * blocksX) + bx) * 8;
+			uint8_t* dstBlk = dst + (by * 4 * dstStride) + (bx * 4 * 4);
+			DecompressBC1Block(blk, dstBlk, dstStride);
+		}
+	}
+}
+
+// Read the SMF-embedded minimap (top mip, 1024x1024 DXT1) and
+// decompress it to a 1024x1024 RGBA8 buffer. Returns empty on
+// failure - the caller falls back to the hypsometric colour ramp.
+std::vector<uint8_t> LoadMinimapRGBA8(CReadMap* rm)
+{
+	auto* smf = dynamic_cast<CSMFReadMap*>(rm);
+	if (smf == nullptr)
+		return {};
+
+	std::vector<uint8_t> dxt1(MINIMAP_SIZE, 0);
+	smf->GetMapFile().ReadMinimap(dxt1.data());
+
+	std::vector<uint8_t> rgba(static_cast<size_t>(kMinimapMip0Size) * kMinimapMip0Size * 4, 0);
+	DecompressBC1Image(dxt1.data(), rgba.data(), kMinimapMip0Size, kMinimapMip0Size);
+	return rgba;
+}
 
 
 // Build a flat XZ grid mesh that covers the full map footprint. Heights
@@ -287,6 +396,34 @@ MetalWorldDrawer::MetalWorldDrawer()
 	}
 	heightmapTexture->UploadImage(hmap);
 
+	// --- Diffuse (SMF minimap as full-map texture). Stays optional:
+	// if the SMF has no minimap (only true for synthetic test maps) the
+	// fragment shader falls back to the hypsometric band. Linear filter
+	// + clamp-to-edge is the same setup GL uses for the minimap's
+	// coarser mips, and we only upload mip 0 since at this resolution
+	// the main draw view is always zoomed out.
+	{
+		std::vector<uint8_t> rgba = LoadMinimapRGBA8(readMap);
+		if (!rgba.empty()) {
+			GL::TextureCreationParams mmParams;
+			mmParams.linearTextureFilter = true;
+			mmParams.linearMipMapFilter  = false;
+			mmParams.reqNumLevels = 1;
+			diffuseTexture = backend.CreateTexture2D(
+				int2(kMinimapMip0Size, kMinimapMip0Size), kGL_RGBA8, mmParams, /*wantCompress=*/false);
+			if (diffuseTexture && diffuseTexture->IsValid()) {
+				diffuseTexture->UploadImage(rgba.data());
+				LOG("[MetalWorldDrawer] minimap diffuse loaded (%dx%d RGBA8)",
+					kMinimapMip0Size, kMinimapMip0Size);
+			} else {
+				LOG_L(L_WARNING, "[MetalWorldDrawer] minimap texture creation failed");
+				diffuseTexture.reset();
+			}
+		} else {
+			LOG_L(L_WARNING, "[MetalWorldDrawer] minimap unavailable; falling back to hypsometric colours");
+		}
+	}
+
 	// --- Uniform buffer (viewProj + height range + sun / corner info).
 	CameraUBOLayout seedUbo{};
 	seedUbo.viewProj[0]  = 1.0f;
@@ -354,6 +491,7 @@ void MetalWorldDrawer::Draw() const
 	}
 	ubo.params[0] = cachedMinHeight;
 	ubo.params[1] = cachedMaxHeight;
+	ubo.params[2] = (diffuseTexture && diffuseTexture->IsValid()) ? 1.0f : 0.0f;
 
 	// Sun direction: take from the live sky (CNullSky wires ISkyLight on
 	// init from mapInfo->light.sunDir). Fall back to a reasonable
@@ -377,6 +515,10 @@ void MetalWorldDrawer::Draw() const
 	pipeline->Enable();
 	pipeline->BindUniformBuffer(0, *uniformBuffer, 0, sizeof(ubo));
 	pipeline->BindTexture(1, *heightmapTexture);
+	if (diffuseTexture && diffuseTexture->IsValid())
+		pipeline->BindTexture(2, *diffuseTexture);
+	else
+		pipeline->BindTexture(2, *heightmapTexture);   // placeholder - fragment won't sample it (haveDiffuse=0)
 	pipeline->BindVertexBuffer(0, *vertexBuffer);
 	pipeline->DrawIndexed(PrimitiveTopology::Triangles, indexCount, IndexType::Uint32, *indexBuffer);
 	pipeline->Disable();

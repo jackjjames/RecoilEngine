@@ -207,10 +207,49 @@ TranslateResult CrossCompileToMsl(Stage stage, const std::vector<uint32_t>& spir
 		// Pin the entry point name so downstream MTLLibrary lookup is stable.
 		compiler.set_entry_point(entry, ToSpvExecutionModel(stage));
 
+		// Preserve GLSL binding= numbers as MSL slot numbers across all
+		// resource types. By default spirv-cross renumbers MSL slots 0..N
+		// per-type, so e.g. a sampler2D with GLSL binding=1 lands on
+		// [[texture(0)]] [[sampler(0)]], which then mismatches callers
+		// that BindTexture(/*slot=*/1, ...) from engine code. Explicit
+		// MSLResourceBinding keeps GLSL and Metal bindings aligned.
+		{
+			const spv::ExecutionModel execModel = ToSpvExecutionModel(stage);
+			const spirv_cross::ShaderResources res = compiler.get_shader_resources();
+
+			auto pin = [&](const spirv_cross::Resource& r, bool hasBuffer, bool hasTexture, bool hasSampler) {
+				spirv_cross::MSLResourceBinding rb{};
+				rb.stage       = execModel;
+				rb.desc_set    = compiler.get_decoration(r.id, spv::DecorationDescriptorSet);
+				rb.binding     = compiler.get_decoration(r.id, spv::DecorationBinding);
+				rb.msl_buffer  = hasBuffer  ? rb.binding : 0;
+				rb.msl_texture = hasTexture ? rb.binding : 0;
+				rb.msl_sampler = hasSampler ? rb.binding : 0;
+				compiler.add_msl_resource_binding(rb);
+			};
+
+			for (const auto& r : res.uniform_buffers)   pin(r, /*buf*/true,  /*tex*/false, /*smp*/false);
+			for (const auto& r : res.storage_buffers)   pin(r, /*buf*/true,  /*tex*/false, /*smp*/false);
+			for (const auto& r : res.push_constant_buffers) pin(r, /*buf*/true, false, false);
+			for (const auto& r : res.sampled_images)    pin(r, /*buf*/false, /*tex*/true,  /*smp*/true);   // combined sampler2D
+			for (const auto& r : res.separate_images)   pin(r, /*buf*/false, /*tex*/true,  /*smp*/false);
+			for (const auto& r : res.separate_samplers) pin(r, /*buf*/false, /*tex*/false, /*smp*/true);
+			for (const auto& r : res.storage_images)    pin(r, /*buf*/false, /*tex*/true,  /*smp*/false);
+		}
+
 		result.msl = compiler.compile();
 		result.ok  = !result.msl.empty();
 		if (!result.ok)
 			result.log = "spirv-cross produced empty MSL";
+
+		// DBG: dump MSL to stderr so we can see which slots spirv-cross
+		// picked for textures / samplers / buffers. Volume is manageable -
+		// only called when pipelines are compiled (at init / first draw).
+		if (result.ok && getenv("RECOIL_DUMP_MSL") != nullptr) {
+			fprintf(stderr, "[ShaderTranslator] MSL stage=%d entry=%s\n%s\n===\n",
+				static_cast<int>(stage), entry.c_str(), result.msl.c_str());
+			fflush(stderr);
+		}
 	} catch (const std::exception& e) {
 		result.ok = false;
 		result.log = std::string("spirv-cross: ") + e.what();

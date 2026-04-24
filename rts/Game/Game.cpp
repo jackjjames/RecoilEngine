@@ -51,6 +51,7 @@
 #include "Rendering/MetalSkyPass.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
+#include "Rendering/MetalUnitMarkers.h"
 #include "Rendering/MetalWorldDrawer.h"
 #endif
 #include "Rendering/Units/UnitDrawer.h"
@@ -1477,14 +1478,17 @@ bool CGame::Draw() {
 	// heightmap + render backend are guaranteed live when we sample
 	// them (readMap / globalRendering->renderBackend are both set up
 	// before CGame::Draw starts ticking).
-	static std::unique_ptr<MetalWorldDrawer> metalWorldDrawer;
-	static std::unique_ptr<MetalSkyPass>     metalSkyPass;
-	static MetalSplashRenderer               loadTile;
-	static MetalTextOverlay                  textOverlay;
+	static std::unique_ptr<MetalWorldDrawer>  metalWorldDrawer;
+	static std::unique_ptr<MetalSkyPass>      metalSkyPass;
+	static std::unique_ptr<MetalUnitMarkers>  metalUnitMarkers;
+	static MetalSplashRenderer                loadTile;
+	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
 		metalWorldDrawer = std::make_unique<MetalWorldDrawer>();
 	if (metalSkyPass == nullptr)
 		metalSkyPass = std::make_unique<MetalSkyPass>();
+	if (metalUnitMarkers == nullptr)
+		metalUnitMarkers = std::make_unique<MetalUnitMarkers>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1504,6 +1508,11 @@ bool CGame::Draw() {
 		// presents something visible if mesh / pipeline init failed.
 		loadTile.Draw();
 	}
+
+	// Unit position markers on top of the terrain. Real CUnitDrawer
+	// (mesh loading + team-colour replacement) lands with S9-C4a/b.
+	if (metalUnitMarkers && metalUnitMarkers->IsValid())
+		metalUnitMarkers->Draw();
 
 	char buf[128];
 	SNPRINTF(buf, sizeof(buf),

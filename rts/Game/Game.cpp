@@ -50,6 +50,7 @@
 #if defined(RENDER_BACKEND_METAL)
 #include "Rendering/MetalDefaultCamera.h"
 #include "Rendering/MetalSkyPass.h"
+#include "Rendering/MetalCommandLines.h"
 #include "Rendering/MetalMinimap.h"
 #include "Rendering/MetalSelectionMarkers.h"
 #include "Rendering/MetalSplashRenderer.h"
@@ -1492,6 +1493,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalProjectiles>  metalProjectiles;
 	static std::unique_ptr<MetalMinimap>      metalMinimap;
 	static std::unique_ptr<MetalSelectionMarkers> metalSelectionMarkers;
+	static std::unique_ptr<MetalCommandLines> metalCommandLines;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1510,6 +1512,8 @@ bool CGame::Draw() {
 		metalMinimap = std::make_unique<MetalMinimap>();
 	if (metalSelectionMarkers == nullptr)
 		metalSelectionMarkers = std::make_unique<MetalSelectionMarkers>();
+	if (metalCommandLines == nullptr)
+		metalCommandLines = std::make_unique<MetalCommandLines>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1584,6 +1588,13 @@ bool CGame::Draw() {
 	// space and shouldn't be obscured by them.
 	if (metalSelectionMarkers && metalSelectionMarkers->IsValid())
 		metalSelectionMarkers->Draw();
+
+	// Order-queue polylines for selected units (move / attack / fight
+	// / patrol / repair / build chains). After selection rings so the
+	// rings provide a clear anchor at each unit; before the minimap
+	// since these are world-space and want to sit under HUD.
+	if (metalCommandLines && metalCommandLines->IsValid())
+		metalCommandLines->Draw();
 
 	// Bottom-left minimap with team-coloured unit dots. Drawn last so
 	// it sits on top of the world geometry, before the debug HUD

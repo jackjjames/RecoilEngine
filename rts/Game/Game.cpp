@@ -48,6 +48,7 @@
 #include "Rendering/ShadowHandler.h"
 #include "Rendering/TeamHighlight.h"
 #if defined(RENDER_BACKEND_METAL)
+#include "Rendering/MetalDefaultCamera.h"
 #include "Rendering/MetalSkyPass.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
@@ -1507,6 +1508,13 @@ bool CGame::Draw() {
 	// stay identical between backends.
 	if (camHandler != nullptr && gu != nullptr)
 		camHandler->UpdateController(playerHandler.Player(gu->myPlayerNum), gu->fpsMode);
+
+	// Pre-Lua-UI bring-up: pin the camera over the local commander on
+	// the first frame a start position is available. See
+	// MetalDefaultCamera.h for why this is needed and when it goes
+	// away.
+	MetalDefaultCamera::MaybeSnapToStartPos();
+
 	if (camera != nullptr)
 		camera->Update();
 

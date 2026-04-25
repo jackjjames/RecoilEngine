@@ -58,13 +58,8 @@ layout(set = 0, binding = 0) uniform UBO {
 } ubo;
 
 void main() {
-    vec4 worldPos = ubo.uModel * vec4(aPos, 1.0);
-    // Unit transforms are rigid (no non-uniform scale) so normal only
-    // needs the 3x3 rotation part. If scale is ever added this must
-    // become the inverse-transpose upper-left 3x3.
-    vec3 nWS = (ubo.uModel * vec4(aNormal, 0.0)).xyz;
-    vNormalWS = nWS;
-    gl_Position = ubo.uViewProj * worldPos;
+    vNormalWS = mat3(ubo.uModel) * aNormal;
+    gl_Position = ubo.uViewProj * ubo.uModel * vec4(aPos, 1.0);
 }
 )";
 
@@ -83,7 +78,6 @@ void main() {
     vec3 N = normalize(vNormalWS);
     vec3 L = normalize(ubo.uSunDir.xyz);
     float diffuse = max(dot(N, L), 0.0);
-    // Hemisphere-style ambient so the dark side doesn't read black.
     float ambient = 0.35 + 0.15 * max(N.y, 0.0);
     vec3 col = ubo.uMaterialRGB.rgb * (ambient + diffuse * 0.7);
     fragColor = vec4(col, 1.0);
@@ -255,23 +249,11 @@ void MetalUnitMesh::Draw()
 	if (skyPtr != nullptr && skyPtr->GetLight() != nullptr)
 		sunDir = skyPtr->GetLight()->GetLightDir();
 	ubo.sunDir[0] = sunDir.x; ubo.sunDir[1] = sunDir.y; ubo.sunDir[2] = sunDir.z;
-	ubo.materialRGB[0] = 0.75f;
-	ubo.materialRGB[1] = 0.75f;
-	ubo.materialRGB[2] = 0.78f;
+	ubo.materialRGB[0] = 0.65f;
+	ubo.materialRGB[1] = 0.65f;
+	ubo.materialRGB[2] = 0.65f;
 
 	pipeline->Enable();
-
-	static bool loggedBounds = false;
-	if (!loggedBounds && !active.empty() && active.front() != nullptr && active.front()->model != nullptr) {
-		const auto* m = active.front()->model;
-		const float3& p = active.front()->pos;
-		LOG("[MetalUnitMesh] first unit '%s' pos=(%.1f,%.1f,%.1f) model.mins=(%.1f,%.1f,%.1f) maxs=(%.1f,%.1f,%.1f) radius=%.1f height=%.1f",
-			m->name.c_str(), p.x, p.y, p.z,
-			m->mins.x, m->mins.y, m->mins.z,
-			m->maxs.x, m->maxs.y, m->maxs.z,
-			m->radius, m->height);
-		loggedBounds = true;
-	}
 
 	for (const CUnit* u : active) {
 		if (u == nullptr || u->model == nullptr)

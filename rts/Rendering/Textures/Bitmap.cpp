@@ -19,6 +19,9 @@
 #include "Bitmap.h"
 #include "Rendering/Textures/GL/GLTexture.h"
 #include "Rendering/Textures/ITexture.h"
+#if defined(RENDER_BACKEND_METAL)
+#include "Rendering/Textures/MetalDXTDecoder.h"
+#endif
 #include "System/ScopedFPUSettings.h"
 #include "System/ContainerUtil.h"
 #include "System/SafeUtil.h"
@@ -1788,15 +1791,69 @@ std::unique_ptr<ITexture> CBitmap::CreateDDSTextureHandle(const GL::TextureCreat
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 #if defined(RENDER_BACKEND_METAL)
-	// DDS/DXT compressed-texture upload depends on GL's
-	// glCompressedTexImage2D path + nv_dds::upload_texture2D. Porting the
-	// compressed format handling to Metal (MTLPixelFormatBC1/3_RGBA +
-	// replaceRegion with bytesPerRow from a block-compressed layout) is
-	// part of the texture + unit-texture handler port (S9-C4). Until then,
-	// return a null ITexture so S3O/feature model textures silently fall
-	// back to the null texture path.
-	(void)tcp;
-	return nullptr;
+	// MTLPixelFormatBC1/2/3 don't exist on Apple Silicon, and the GL
+	// build's path goes straight through glCompressedTexImage2D which
+	// has no Metal equivalent. Decode CPU-side to RGBA8 and upload as
+	// an uncompressed texture; ~1MB per S3O texture, decoded once at
+	// load time, so the cost is dwarfed by the disk read.
+	if (ddsimage.get_type() != nv_dds::TextureFlat)
+		return nullptr; // 3D / cubemap come up later if anything actually needs them
+	if (ddsimage.get_num_mipmaps() == 0)
+		return nullptr;
+
+	const auto& mip0 = ddsimage.get_mipmap(0);
+	const int w = static_cast<int>(mip0.get_width());
+	const int h = static_cast<int>(mip0.get_height());
+	if (w <= 0 || h <= 0)
+		return nullptr;
+
+	const uint32_t fmt = ddsimage.get_format();
+	std::vector<uint8_t> rgba(static_cast<size_t>(w) * h * 4, 0);
+	const uint8_t* compressed = static_cast<const uint8_t*>(static_cast<unsigned char*>(const_cast<nv_dds::CSurface&>(mip0)));
+
+	switch (fmt) {
+		case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
+			MetalDXT::DecompressBC1Image(compressed, rgba.data(), w, h);
+			break;
+		case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
+			MetalDXT::DecompressBC2Image(compressed, rgba.data(), w, h);
+			break;
+		case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
+			MetalDXT::DecompressBC3Image(compressed, rgba.data(), w, h);
+			break;
+		case GL_BGRA: {
+			const uint8_t* src = compressed;
+			for (int i = 0; i < w * h; ++i) {
+				rgba[i * 4 + 0] = src[i * 4 + 2];
+				rgba[i * 4 + 1] = src[i * 4 + 1];
+				rgba[i * 4 + 2] = src[i * 4 + 0];
+				rgba[i * 4 + 3] = src[i * 4 + 3];
+			}
+		} break;
+		case GL_BGR: {
+			const uint8_t* src = compressed;
+			for (int i = 0; i < w * h; ++i) {
+				rgba[i * 4 + 0] = src[i * 3 + 2];
+				rgba[i * 4 + 1] = src[i * 3 + 1];
+				rgba[i * 4 + 2] = src[i * 3 + 0];
+				rgba[i * 4 + 3] = 255;
+			}
+		} break;
+		default:
+			return nullptr;
+	}
+
+	GL::TextureCreationParams params = tcp;
+	params.reqNumLevels = 0; // GenerateMipmaps below; the compressed mip chain is dropped on this path
+	auto texture = CreateTexture2DHandle(int2(w, h), GL_RGBA8, params, /*wantCompress=*/false);
+	if (texture == nullptr)
+		return nullptr;
+
+	texture->Bind();
+	texture->UploadImage(rgba.data());
+	texture->GenerateMipmaps();
+	texture->Unbind();
+	return texture;
 #endif
 	glPushAttrib(GL_TEXTURE_BIT);
 

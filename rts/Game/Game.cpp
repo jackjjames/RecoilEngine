@@ -52,6 +52,7 @@
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalUnitMarkers.h"
+#include "Rendering/MetalUnitMesh.h"
 #include "Rendering/MetalWorldDrawer.h"
 #endif
 #include "Rendering/Units/UnitDrawer.h"
@@ -1481,6 +1482,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalWorldDrawer>  metalWorldDrawer;
 	static std::unique_ptr<MetalSkyPass>      metalSkyPass;
 	static std::unique_ptr<MetalUnitMarkers>  metalUnitMarkers;
+	static std::unique_ptr<MetalUnitMesh>     metalUnitMesh;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1489,6 +1491,8 @@ bool CGame::Draw() {
 		metalSkyPass = std::make_unique<MetalSkyPass>();
 	if (metalUnitMarkers == nullptr)
 		metalUnitMarkers = std::make_unique<MetalUnitMarkers>();
+	if (metalUnitMesh == nullptr)
+		metalUnitMesh = std::make_unique<MetalUnitMesh>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1520,8 +1524,16 @@ bool CGame::Draw() {
 		loadTile.Draw();
 	}
 
-	// Unit position markers on top of the terrain. Real CUnitDrawer
-	// (mesh loading + team-colour replacement) lands with S9-C4a/b.
+	// 3D unit meshes (bind-pose, grey-lit) from S9-C4a. Team colour
+	// replacement + texturing lands with S9-C4b; until then the mesh
+	// draw is an opaque forward pass over every active unit.
+	if (metalUnitMesh && metalUnitMesh->IsValid())
+		metalUnitMesh->Draw();
+
+	// Unit position markers on top of the terrain. Keep drawing so
+	// radius / team colour is still legible even when the mesh pass is
+	// disabled or an S3O model fails to upload. Remove once S9-C4b
+	// makes team colours visible on the meshes directly.
 	if (metalUnitMarkers && metalUnitMarkers->IsValid())
 		metalUnitMarkers->Draw();
 

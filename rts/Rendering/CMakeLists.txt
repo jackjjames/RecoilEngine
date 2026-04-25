@@ -170,6 +170,7 @@ if (APPLE AND SPRING_RENDER_BACKEND STREQUAL "metal")
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalTextOverlay.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalTexture.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalUnitMarkers.cpp"
+		"${CMAKE_CURRENT_SOURCE_DIR}/MetalUnitMesh.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalWorldDrawer.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/MetalPresenter.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/Platform/MetalRenderContext.mm"

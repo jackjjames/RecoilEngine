@@ -18,6 +18,7 @@
 #include "Rendering/IRenderBackend.h"
 #include "Rendering/Shaders/IShaderPipeline.h"
 #include "Rendering/Textures/ITexture.h"
+#include "Rendering/Textures/MetalDXTDecoder.h"
 #include "Rendering/Textures/TextureCreationParams.hpp"
 #include "Sim/Misc/GlobalConstants.h"
 #include "System/Log/ILog.h"
@@ -168,81 +169,8 @@ struct alignas(16) CameraUBOLayout {
 };
 
 
-// Decompress one BC1 (DXT1) 4x4 block to RGBA8. 8 input bytes -> 64
-// output bytes laid out as four rows of 4 RGBA pixels. Minimaps use
-// opaque 4-colour mode; the 3-colour / 1-bit alpha variant is still
-// handled for robustness because some tooling emits it. Self-contained
-// so it can disappear when the real SMFGroundTextures tile decoder
-// (which in the GL path goes straight through glCompressedTexImage2D
-// without a CPU decompression step) lands on Metal.
-void DecompressBC1Block(const uint8_t* src, uint8_t* dst, int dstStride)
-{
-	const uint16_t c0 = static_cast<uint16_t>(src[0] | (src[1] << 8));
-	const uint16_t c1 = static_cast<uint16_t>(src[2] | (src[3] << 8));
-
-	auto unpack565 = [](uint16_t c, uint8_t out[4]) {
-		const uint32_t r5 = (c >> 11) & 0x1F;
-		const uint32_t g6 = (c >>  5) & 0x3F;
-		const uint32_t b5 = (c      ) & 0x1F;
-		out[0] = static_cast<uint8_t>((r5 * 255 + 15) / 31);
-		out[1] = static_cast<uint8_t>((g6 * 255 + 31) / 63);
-		out[2] = static_cast<uint8_t>((b5 * 255 + 15) / 31);
-		out[3] = 255;
-	};
-
-	uint8_t palette[4][4];
-	unpack565(c0, palette[0]);
-	unpack565(c1, palette[1]);
-
-	if (c0 > c1) {
-		for (int k = 0; k < 3; ++k) {
-			palette[2][k] = static_cast<uint8_t>((2 * palette[0][k] + palette[1][k]) / 3);
-			palette[3][k] = static_cast<uint8_t>((palette[0][k] + 2 * palette[1][k]) / 3);
-		}
-		palette[2][3] = 255;
-		palette[3][3] = 255;
-	} else {
-		for (int k = 0; k < 3; ++k) {
-			palette[2][k] = static_cast<uint8_t>((palette[0][k] + palette[1][k]) / 2);
-			palette[3][k] = 0;
-		}
-		palette[2][3] = 255;
-		palette[3][3] = 0;
-	}
-
-	const uint32_t indices = static_cast<uint32_t>(src[4])
-	                      | (static_cast<uint32_t>(src[5]) <<  8)
-	                      | (static_cast<uint32_t>(src[6]) << 16)
-	                      | (static_cast<uint32_t>(src[7]) << 24);
-
-	for (int y = 0; y < 4; ++y) {
-		uint8_t* row = dst + y * dstStride;
-		for (int x = 0; x < 4; ++x) {
-			const uint32_t bit = (indices >> (2 * (4 * y + x))) & 0x3u;
-			row[x * 4 + 0] = palette[bit][0];
-			row[x * 4 + 1] = palette[bit][1];
-			row[x * 4 + 2] = palette[bit][2];
-			row[x * 4 + 3] = palette[bit][3];
-		}
-	}
-}
-
-// Decompress a packed stream of BC1 blocks (row-major, 4x4 blocks
-// across) to an RGBA8 image of size width x height.
-void DecompressBC1Image(const uint8_t* src, uint8_t* dst, int width, int height)
-{
-	const int blocksX = width  / 4;
-	const int blocksY = height / 4;
-	const int dstStride = width * 4;
-
-	for (int by = 0; by < blocksY; ++by) {
-		for (int bx = 0; bx < blocksX; ++bx) {
-			const uint8_t* blk = src + ((by * blocksX) + bx) * 8;
-			uint8_t* dstBlk = dst + (by * 4 * dstStride) + (bx * 4 * 4);
-			DecompressBC1Block(blk, dstBlk, dstStride);
-		}
-	}
-}
+// SMF-minimap DXT1 -> RGBA8 lives on MetalDXT::DecompressBC1Image now,
+// shared with the S3O / feature texture path.
 
 // Pack world-space float3 normals (-1..1) into RGBA8 (0..255, xyz*0.5
 // + 0.5, alpha=255). The fragment shader unpacks symmetrically. Avoids
@@ -278,7 +206,7 @@ std::vector<uint8_t> LoadMinimapRGBA8(CReadMap* rm)
 	smf->GetMapFile().ReadMinimap(dxt1.data());
 
 	std::vector<uint8_t> rgba(static_cast<size_t>(kMinimapMip0Size) * kMinimapMip0Size * 4, 0);
-	DecompressBC1Image(dxt1.data(), rgba.data(), kMinimapMip0Size, kMinimapMip0Size);
+	MetalDXT::DecompressBC1Image(dxt1.data(), rgba.data(), kMinimapMip0Size, kMinimapMip0Size);
 	return rgba;
 }
 

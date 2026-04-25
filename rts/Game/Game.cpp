@@ -52,6 +52,7 @@
 #include "Rendering/MetalSkyPass.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
+#include "Rendering/MetalProjectiles.h"
 #include "Rendering/MetalUnitMesh.h"
 #include "Rendering/MetalUnitShadows.h"
 #include "Rendering/MetalWaterPlane.h"
@@ -1486,6 +1487,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalWaterPlane>   metalWaterPlane;
 	static std::unique_ptr<MetalUnitShadows>  metalUnitShadows;
 	static std::unique_ptr<MetalUnitMesh>     metalUnitMesh;
+	static std::unique_ptr<MetalProjectiles>  metalProjectiles;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1498,6 +1500,8 @@ bool CGame::Draw() {
 		metalUnitShadows = std::make_unique<MetalUnitShadows>();
 	if (metalUnitMesh == nullptr)
 		metalUnitMesh = std::make_unique<MetalUnitMesh>();
+	if (metalProjectiles == nullptr)
+		metalProjectiles = std::make_unique<MetalProjectiles>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1557,6 +1561,14 @@ bool CGame::Draw() {
 	// mask team colour replacement (S9-C4a + S9-C4b parts 2 / 3).
 	if (metalUnitMesh && metalUnitMesh->IsValid())
 		metalUnitMesh->Draw();
+
+	// Projectile tracers go on top of units so plasma rounds and
+	// laser beams read against unit silhouettes. Additive blend, so
+	// overlapping projectiles brighten cleanly. Real per-WeaponDef
+	// visuals (atlas textures, beam laser meshes, missile models)
+	// land with the CProjectileDrawer port.
+	if (metalProjectiles && metalProjectiles->IsValid())
+		metalProjectiles->Draw();
 
 	char buf[128];
 	SNPRINTF(buf, sizeof(buf),

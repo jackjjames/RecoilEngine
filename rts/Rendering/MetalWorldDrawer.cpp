@@ -97,6 +97,29 @@ layout(set = 0, binding = 1) uniform sampler2D uHeight;
 layout(set = 0, binding = 2) uniform sampler2D uDiffuse;
 layout(set = 0, binding = 3) uniform sampler2D uNormals;
 
+// Cheap value-noise hash. Two-octave sum gives a recognisable
+// crease/dust pattern at the texel scale without sampling any extra
+// textures - keeps the terrain looking like ground rather than an
+// aggressively-upscaled minimap.
+float hash21(vec2 p)
+{
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float ValueNoise(vec2 p)
+{
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float a = hash21(i);
+    float b = hash21(i + vec2(1.0, 0.0));
+    float c = hash21(i + vec2(0.0, 1.0));
+    float d = hash21(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
 // Fallback: build a world-space normal from the heightmap by
 // central-differencing four neighbour samples in UV space. Used only
 // when the pre-baked map normals aren't available (haveNormals == 0).
@@ -156,9 +179,20 @@ void main() {
     float half_lambert = 0.5 * ndl + 0.5 * max(dot(N, L), -0.2);
     float diffuse = clamp(half_lambert, 0.0, 1.0);
 
+    // Two-octave detail noise sampled in world XZ space. Modulates
+    // albedo brightness only (no chroma shift) so a desert reads as
+    // dusty desert and a green map as patchy grass; the SMF tiled
+    // diffuse path (S9-C3c) replaces this with real ground textures
+    // once it lands.
+    float n0 = ValueNoise(vWorldPos.xz * 0.07);
+    float n1 = ValueNoise(vWorldPos.xz * 0.31 + 17.0);
+    float detail = n0 * 0.65 + n1 * 0.35;
+    detail = mix(0.82, 1.18, detail);
+    vec3 detailedAlbedo = albedo * detail;
+
     vec3 sunColor = vec3(1.00, 0.96, 0.88);
     vec3 ambColor = vec3(0.35, 0.38, 0.45);
-    vec3 col = albedo * (sunColor * diffuse + ambColor);
+    vec3 col = detailedAlbedo * (sunColor * diffuse + ambColor);
 
     // Distance-fade into the horizon colour. The fog factor is an
     // exponential of the squared world-space distance: hides the

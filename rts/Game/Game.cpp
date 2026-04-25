@@ -54,6 +54,7 @@
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalUnitMesh.h"
 #include "Rendering/MetalUnitShadows.h"
+#include "Rendering/MetalWaterPlane.h"
 #include "Rendering/MetalWorldDrawer.h"
 #endif
 #include "Rendering/Units/UnitDrawer.h"
@@ -1482,6 +1483,7 @@ bool CGame::Draw() {
 	// before CGame::Draw starts ticking).
 	static std::unique_ptr<MetalWorldDrawer>  metalWorldDrawer;
 	static std::unique_ptr<MetalSkyPass>      metalSkyPass;
+	static std::unique_ptr<MetalWaterPlane>   metalWaterPlane;
 	static std::unique_ptr<MetalUnitShadows>  metalUnitShadows;
 	static std::unique_ptr<MetalUnitMesh>     metalUnitMesh;
 	static MetalSplashRenderer                loadTile;
@@ -1490,6 +1492,8 @@ bool CGame::Draw() {
 		metalWorldDrawer = std::make_unique<MetalWorldDrawer>();
 	if (metalSkyPass == nullptr)
 		metalSkyPass = std::make_unique<MetalSkyPass>();
+	if (metalWaterPlane == nullptr)
+		metalWaterPlane = std::make_unique<MetalWaterPlane>();
 	if (metalUnitShadows == nullptr)
 		metalUnitShadows = std::make_unique<MetalUnitShadows>();
 	if (metalUnitMesh == nullptr)
@@ -1531,6 +1535,15 @@ bool CGame::Draw() {
 		// presents something visible if mesh / pipeline init failed.
 		loadTile.Draw();
 	}
+
+	// Water sits on top of the terrain so the alpha blend produces
+	// shore softness where land pokes through. The water pass is a
+	// no-op on dry maps (currentMinHeight >= 0 with forceRendering
+	// off), so this costs nothing on Red Comet et al. Real BumpWater
+	// reflections / refractions land with the IRenderTarget colour
+	// attachment slice; until then this is the analytic stand-in.
+	if (metalWaterPlane && metalWaterPlane->IsValid())
+		metalWaterPlane->Draw();
 
 	// Shadow decals before the unit pass: terrain has just written
 	// colour, the decal multiplies that colour down, then the unit

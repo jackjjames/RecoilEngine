@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 class IBuffer;
 class IShaderPipeline;
@@ -13,19 +14,21 @@ class ITexture;
 struct S3DModel;
 
 // 3D unit + feature drawer. For every active unit / feature whose model
-// has geometry attached, draws the model in the bind pose at the unit's
-// world transform with diffuse texture sampling and alpha-mask team
-// colour replacement (matches GL's springcontent ModelFragProg.glsl
-// convention: alpha=0 keeps diffuse, alpha=1 swaps to team colour).
-// Lazily uploads one vertex / index buffer pair per S3DModel pointer.
+// has geometry attached, walks the LocalModel piece tree and draws each
+// piece at its current animated transform (unit world transform * piece
+// model-space transform). Diffuse texture sampling with alpha-mask team
+// colour replacement matches GL's springcontent ModelFragProg.glsl
+// convention: alpha=0 keeps diffuse, alpha=1 swaps to team colour.
+// Lazily uploads one vertex / index buffer pair per S3DModelPiece.
 //
 // Intentionally missing:
-//   - per-piece animation; the LocalModel tree is ignored and pieces are
-//     drawn in bind pose only. Lands with TransformsUploader + an SSBO of
-//     piece matrices (S9-C4b part 2).
 //   - tex2 / specular / self-illumination sampling.
 //   - LOD + frustum culling; every active object is submitted every frame.
 //   - shadow pass (S9-C5a).
+//   - GPU-side transform SSBO: matrices are pushed through the per-draw
+//     UBO. Per-piece draw call counts top out around 3-4k for medium
+//     skirmishes which is comfortable on Metal; the SSBO path lands when
+//     instancing becomes the bottleneck.
 class MetalUnitMesh
 {
 public:
@@ -40,15 +43,22 @@ public:
 	void Draw();
 
 private:
-	struct ModelBuffers {
+	struct PieceBuffers {
 		std::unique_ptr<IBuffer> vertexBuffer;
 		std::unique_ptr<IBuffer> indexBuffer;
 		uint32_t indexCount = 0;
 	};
+	struct ModelBuffers {
+		// pieces[i] aligns with S3DModel::pieceObjects[i] /
+		// LocalModel::pieces[i]; empty slots (piece without geometry,
+		// or upload failure) carry a default-constructed PieceBuffers
+		// so the lookup stays branch-free.
+		std::vector<PieceBuffers> pieces;
+		bool anyGeometry = false;
+	};
 
-	// Upload the flattened bind-pose mesh for `model` into GPU buffers
-	// and cache the result. Returns null when the model has no drawable
-	// geometry (e.g. aircraft wrecks that were stripped at load time).
+	// Upload one vertex / index buffer pair per geometry-bearing piece
+	// of `model`. Returns null when the model has no drawable geometry.
 	const ModelBuffers* GetOrUploadModel(const S3DModel* model);
 
 	std::unique_ptr<IShaderPipeline>            pipeline;

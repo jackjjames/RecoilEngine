@@ -13,6 +13,7 @@
 #include "Rendering/IRenderBackend.h"
 #include "Rendering/Models/3DModel.hpp"
 #include "Rendering/Models/3DModelPiece.hpp"
+#include "Rendering/Models/LocalModel.hpp"
 #include "Rendering/Models/VertexData.hpp"
 #include "Rendering/Shaders/IShaderPipeline.h"
 #include "Rendering/Textures/ITexture.h"
@@ -93,11 +94,6 @@ void main() {
     // overrides with the team colour. Most BAR commanders / factories
     // texture the body and reserve alpha=1 for trim, accents and
     // logos.
-    // S3O convention (matches GLSL/ModelFragProg.glsl): texture alpha
-    // = team-mask weight. alpha=0 keeps the diffuse texel, alpha=1
-    // overrides with the team colour. Most BAR commanders / factories
-    // texture the body and reserve alpha=1 for trim, accents and
-    // logos.
     vec4 diff = texture(uDiffuse, vUV);
     vec3 albedo = mix(diff.rgb, ubo.uMaterialRGB.rgb, diff.a);
 
@@ -110,63 +106,35 @@ void main() {
 )";
 
 
-// Flatten every piece's vertices into model-space by applying the piece
-// bind-pose transform. Matches what S3DModelVAO::ProcessVertices does on
-// the GL path (it keeps the piece-local coords and applies the bind pose
-// through a per-vertex bone weight SSBO; we do the same work on the CPU
-// here to avoid depending on transformsUploader + SSBO plumbing for this
-// first slice).
-bool FlattenModelBindPose(const S3DModel* model,
-                          std::vector<UnitVertex>& verts,
-                          std::vector<uint32_t>&   inds)
+// Pack a piece's raw piece-local vertices into the compact UnitVertex
+// layout. Bind pose / animation are applied per-draw through the model
+// matrix UBO using LocalModelPiece::GetModelSpaceMatrix() - same chain
+// the GL path drives through TransformsUploader, just routed through
+// individual draw calls instead of an SSBO.
+bool PackPieceGeometry(const S3DModelPiece* piece,
+                       std::vector<UnitVertex>& verts,
+                       std::vector<uint32_t>&   inds)
 {
-	if (model == nullptr)
+	if (piece == nullptr || !piece->HasGeometryData())
+		return false;
+
+	const auto& pieceVerts = piece->GetVerticesVec();
+	const auto& pieceInds  = piece->GetIndicesVec();
+	if (pieceVerts.empty() || pieceInds.empty())
 		return false;
 
 	verts.clear();
-	inds.clear();
-
-	for (const S3DModelPiece* piece : model->pieceObjects) {
-		if (piece == nullptr || !piece->HasGeometryData())
-			continue;
-
-		const auto& pieceVerts = piece->GetVerticesVec();
-		const auto& pieceInds  = piece->GetIndicesVec();
-		if (pieceVerts.empty() || pieceInds.empty())
-			continue;
-
-		const CMatrix44f bpose = piece->bposeTransform.ToMatrix();
-
-		const uint32_t baseIdx = static_cast<uint32_t>(verts.size());
-		verts.reserve(verts.size() + pieceVerts.size());
-		for (const SVertexData& v : pieceVerts) {
-			const float3 p = bpose.Mul(v.pos);
-			// Transform-as-direction (w=0) ignores translation, so the
-			// rotation component of the bind pose matrix is enough for
-			// normals. If non-uniform scale ever shows up on a piece
-			// bpose this must switch to inverse-transpose 3x3.
-			const float3& n0 = v.normal;
-			float3 n(
-				bpose.m[0] * n0.x + bpose.m[4] * n0.y + bpose.m[ 8] * n0.z,
-				bpose.m[1] * n0.x + bpose.m[5] * n0.y + bpose.m[ 9] * n0.z,
-				bpose.m[2] * n0.x + bpose.m[6] * n0.y + bpose.m[10] * n0.z
-			);
-			if (n.SqLength() > 1e-6f)
-				n.Normalize();
-
-			verts.push_back(UnitVertex{
-				p.x, p.y, p.z,
-				n.x, n.y, n.z,
-				v.texCoords[0].x, v.texCoords[0].y,
-			});
-		}
-
-		inds.reserve(inds.size() + pieceInds.size());
-		for (uint32_t ix : pieceInds)
-			inds.push_back(baseIdx + ix);
+	verts.reserve(pieceVerts.size());
+	for (const SVertexData& v : pieceVerts) {
+		verts.push_back(UnitVertex{
+			v.pos.x, v.pos.y, v.pos.z,
+			v.normal.x, v.normal.y, v.normal.z,
+			v.texCoords[0].x, v.texCoords[0].y,
+		});
 	}
 
-	return !verts.empty() && !inds.empty();
+	inds.assign(pieceInds.begin(), pieceInds.end());
+	return true;
 }
 
 } // namespace
@@ -245,31 +213,48 @@ const MetalUnitMesh::ModelBuffers* MetalUnitMesh::GetOrUploadModel(const S3DMode
 
 	auto it = modelCache.find(model);
 	if (it != modelCache.end())
-		return it->second.indexCount > 0 ? &it->second : nullptr;
-
-	std::vector<UnitVertex> verts;
-	std::vector<uint32_t>   inds;
-	if (!FlattenModelBindPose(model, verts, inds)) {
-		// Cache the negative so we don't retry flattening every frame.
-		modelCache.emplace(model, ModelBuffers{});
-		return nullptr;
-	}
+		return it->second.anyGeometry ? &it->second : nullptr;
 
 	auto& backend = *globalRendering->renderBackend;
 	ModelBuffers mb;
-	mb.vertexBuffer = backend.CreateBuffer(verts.size() * sizeof(UnitVertex), verts.data());
-	mb.indexBuffer  = backend.CreateBuffer(inds.size()  * sizeof(uint32_t),   inds.data());
-	if (!mb.vertexBuffer || !mb.vertexBuffer->IsValid() ||
-	    !mb.indexBuffer  || !mb.indexBuffer->IsValid())
-	{
-		LOG_L(L_WARNING, "[MetalUnitMesh] buffer upload failed for model '%s'", model->name.c_str());
+	mb.pieces.resize(model->pieceObjects.size());
+
+	size_t totalVerts = 0;
+	size_t totalInds  = 0;
+
+	std::vector<UnitVertex> verts;
+	std::vector<uint32_t>   inds;
+	for (size_t i = 0; i < model->pieceObjects.size(); ++i) {
+		const S3DModelPiece* piece = model->pieceObjects[i];
+		if (!PackPieceGeometry(piece, verts, inds))
+			continue;
+
+		PieceBuffers pb;
+		pb.vertexBuffer = backend.CreateBuffer(verts.size() * sizeof(UnitVertex), verts.data());
+		pb.indexBuffer  = backend.CreateBuffer(inds.size()  * sizeof(uint32_t),   inds.data());
+		if (!pb.vertexBuffer || !pb.vertexBuffer->IsValid() ||
+		    !pb.indexBuffer  || !pb.indexBuffer->IsValid())
+		{
+			LOG_L(L_WARNING, "[MetalUnitMesh] piece buffer upload failed for model '%s' piece %zu",
+				model->name.c_str(), i);
+			continue;
+		}
+		pb.indexCount = static_cast<uint32_t>(inds.size());
+
+		mb.pieces[i] = std::move(pb);
+		mb.anyGeometry = true;
+		totalVerts += verts.size();
+		totalInds  += inds.size();
+	}
+
+	if (!mb.anyGeometry) {
+		// Cache the negative so we don't retry every frame.
 		modelCache.emplace(model, ModelBuffers{});
 		return nullptr;
 	}
-	mb.indexCount = static_cast<uint32_t>(inds.size());
 
 	LOG_L(L_INFO, "[MetalUnitMesh] uploaded '%s' verts=%zu indices=%zu pieces=%d",
-		model->name.c_str(), verts.size(), inds.size(), model->numPieces);
+		model->name.c_str(), totalVerts, totalInds, model->numPieces);
 
 	auto [emplaced, ok] = modelCache.emplace(model, std::move(mb));
 	return &emplaced->second;
@@ -305,15 +290,11 @@ void MetalUnitMesh::Draw()
 		const ModelBuffers* mb = GetOrUploadModel(so->model);
 		if (mb == nullptr)
 			return;
+		if (!so->localModel.Initialized())
+			return;
 
-		const CMatrix44f model = so->ComposeMatrix(so->pos);
-		std::memcpy(ubo.model, model.m, sizeof(ubo.model));
-		ubo.materialRGB[0] = matR;
-		ubo.materialRGB[1] = matG;
-		ubo.materialRGB[2] = matB;
-
-		uniformBuffer->UpdateData(&ubo, sizeof(ubo), 0);
-
+		// Diffuse + team colour are constant across all pieces of one
+		// solid; bind them once before walking the piece tree.
 		ITexture* diffuse = nullptr;
 		if (so->model->textureType > 0) {
 			const auto* mat = textureHandlerS3O.GetTexture(so->model->textureType);
@@ -323,12 +304,42 @@ void MetalUnitMesh::Draw()
 		if (diffuse == nullptr || !diffuse->IsValid())
 			diffuse = whiteTexture.get();
 
-		pipeline->BindUniformBuffer(0, *uniformBuffer, 0, sizeof(ubo));
-		if (diffuse != nullptr)
-			pipeline->BindTexture(1, *diffuse);
-		pipeline->BindVertexBuffer(0, *mb->vertexBuffer);
-		pipeline->DrawIndexed(PrimitiveTopology::Triangles, mb->indexCount,
-			IndexType::Uint32, *mb->indexBuffer);
+		ubo.materialRGB[0] = matR;
+		ubo.materialRGB[1] = matG;
+		ubo.materialRGB[2] = matB;
+
+		const CMatrix44f worldMat = so->ComposeMatrix(so->pos);
+
+		const auto& lpieces = so->localModel.pieces;
+		const size_t pieceCount = std::min(lpieces.size(), mb->pieces.size());
+		for (size_t i = 0; i < pieceCount; ++i) {
+			const PieceBuffers& pb = mb->pieces[i];
+			if (pb.indexCount == 0)
+				continue;
+
+			const LocalModelPiece& lmp = lpieces[i];
+			if (!lmp.GetScriptVisible())
+				continue;
+
+			// pieceModelMat is the piece's transform relative to the
+			// model root, with COB animation already chained in via
+			// pieceSpaceTra updates. Combining with the unit's world
+			// transform gives the final piece-to-world matrix; same
+			// composition the GL path bakes into TransformsUploader's
+			// per-piece SSBO entry.
+			const CMatrix44f& pieceModelMat = lmp.GetModelSpaceMatrix();
+			const CMatrix44f finalMat = worldMat * pieceModelMat;
+			std::memcpy(ubo.model, finalMat.m, sizeof(ubo.model));
+
+			uniformBuffer->UpdateData(&ubo, sizeof(ubo), 0);
+
+			pipeline->BindUniformBuffer(0, *uniformBuffer, 0, sizeof(ubo));
+			if (diffuse != nullptr)
+				pipeline->BindTexture(1, *diffuse);
+			pipeline->BindVertexBuffer(0, *pb.vertexBuffer);
+			pipeline->DrawIndexed(PrimitiveTopology::Triangles, pb.indexCount,
+				IndexType::Uint32, *pb.indexBuffer);
+		}
 	};
 
 	for (const CUnit* u : active) {

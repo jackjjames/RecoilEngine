@@ -53,6 +53,7 @@
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalUnitMesh.h"
+#include "Rendering/MetalUnitShadows.h"
 #include "Rendering/MetalWorldDrawer.h"
 #endif
 #include "Rendering/Units/UnitDrawer.h"
@@ -1481,6 +1482,7 @@ bool CGame::Draw() {
 	// before CGame::Draw starts ticking).
 	static std::unique_ptr<MetalWorldDrawer>  metalWorldDrawer;
 	static std::unique_ptr<MetalSkyPass>      metalSkyPass;
+	static std::unique_ptr<MetalUnitShadows>  metalUnitShadows;
 	static std::unique_ptr<MetalUnitMesh>     metalUnitMesh;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
@@ -1488,6 +1490,8 @@ bool CGame::Draw() {
 		metalWorldDrawer = std::make_unique<MetalWorldDrawer>();
 	if (metalSkyPass == nullptr)
 		metalSkyPass = std::make_unique<MetalSkyPass>();
+	if (metalUnitShadows == nullptr)
+		metalUnitShadows = std::make_unique<MetalUnitShadows>();
 	if (metalUnitMesh == nullptr)
 		metalUnitMesh = std::make_unique<MetalUnitMesh>();
 
@@ -1528,9 +1532,16 @@ bool CGame::Draw() {
 		loadTile.Draw();
 	}
 
-	// 3D unit meshes (bind-pose) with S3O diffuse + alpha-mask team
-	// colour replacement (S9-C4a + first half of C4b). Per-piece
-	// animation and a real shadow pass land in later slices.
+	// Shadow decals before the unit pass: terrain has just written
+	// colour, the decal multiplies that colour down, then the unit
+	// mesh paints its body on top. Real sun-projected shadow mapping
+	// (S9-C5a part 2) replaces this once IRenderTarget grows depth
+	// attachments on Metal.
+	if (metalUnitShadows && metalUnitShadows->IsValid())
+		metalUnitShadows->Draw();
+
+	// 3D unit meshes with per-piece animation + S3O diffuse + alpha-
+	// mask team colour replacement (S9-C4a + S9-C4b parts 2 / 3).
 	if (metalUnitMesh && metalUnitMesh->IsValid())
 		metalUnitMesh->Draw();
 

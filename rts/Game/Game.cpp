@@ -50,6 +50,7 @@
 #if defined(RENDER_BACKEND_METAL)
 #include "Rendering/MetalDefaultCamera.h"
 #include "Rendering/MetalSkyPass.h"
+#include "Rendering/MetalMinimap.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalProjectiles.h"
@@ -1488,6 +1489,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalUnitShadows>  metalUnitShadows;
 	static std::unique_ptr<MetalUnitMesh>     metalUnitMesh;
 	static std::unique_ptr<MetalProjectiles>  metalProjectiles;
+	static std::unique_ptr<MetalMinimap>      metalMinimap;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1502,6 +1504,8 @@ bool CGame::Draw() {
 		metalUnitMesh = std::make_unique<MetalUnitMesh>();
 	if (metalProjectiles == nullptr)
 		metalProjectiles = std::make_unique<MetalProjectiles>();
+	if (metalMinimap == nullptr)
+		metalMinimap = std::make_unique<MetalMinimap>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1569,6 +1573,12 @@ bool CGame::Draw() {
 	// land with the CProjectileDrawer port.
 	if (metalProjectiles && metalProjectiles->IsValid())
 		metalProjectiles->Draw();
+
+	// Bottom-left minimap with team-coloured unit dots. Drawn last so
+	// it sits on top of the world geometry, before the debug HUD
+	// text. Skipped on non-SMF maps (no minimap mip in the .smf).
+	if (metalMinimap && metalMinimap->IsValid())
+		metalMinimap->Draw();
 
 	char buf[128];
 	SNPRINTF(buf, sizeof(buf),

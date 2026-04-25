@@ -169,6 +169,7 @@ if (APPLE AND SPRING_RENDER_BACKEND STREQUAL "metal")
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalSplashRenderer.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalDefaultCamera.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalGroundTextures.cpp"
+		"${CMAKE_CURRENT_SOURCE_DIR}/MetalMinimap.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalTextOverlay.cpp"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalTexture.mm"
 		"${CMAKE_CURRENT_SOURCE_DIR}/MetalUnitMesh.cpp"

@@ -127,6 +127,14 @@ void CWorldDrawer::InitPre() const
 	CColorMap::InitStatic();
 	S3DModelVAO::Init();
 	modelLoader.Init();
+	// Mirrors the GL branch below: must run before featureHandler /
+	// unitHandler spawn anything, since CFeature / CUnit construction
+	// asks the model loader to upload the model, which in turn calls
+	// textureHandlerS3O.LoadTexture() and assigns model->textureType
+	// from the live `textures` vector. Without this Init reserving the
+	// (0, 1) dummy slots, models stack at index 0 -> all of them share
+	// textureType=0 and there's no way to fetch the per-model material.
+	textureHandlerS3O.Init();
 	// Install a no-op sky so ISky::GetSky() / sky->GetLight() return live
 	// objects instead of null. BAR map gadgets (e.g. map_atmosphere_cegs)
 	// call gl.GetSun("pos") + gl.GetAtmosphere(...) during LuaRules init

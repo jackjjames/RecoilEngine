@@ -51,6 +51,7 @@
 #include "Rendering/MetalDefaultCamera.h"
 #include "Rendering/MetalSkyPass.h"
 #include "Rendering/MetalMinimap.h"
+#include "Rendering/MetalSelectionMarkers.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalProjectiles.h"
@@ -1490,6 +1491,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalUnitMesh>     metalUnitMesh;
 	static std::unique_ptr<MetalProjectiles>  metalProjectiles;
 	static std::unique_ptr<MetalMinimap>      metalMinimap;
+	static std::unique_ptr<MetalSelectionMarkers> metalSelectionMarkers;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1506,6 +1508,8 @@ bool CGame::Draw() {
 		metalProjectiles = std::make_unique<MetalProjectiles>();
 	if (metalMinimap == nullptr)
 		metalMinimap = std::make_unique<MetalMinimap>();
+	if (metalSelectionMarkers == nullptr)
+		metalSelectionMarkers = std::make_unique<MetalSelectionMarkers>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1573,6 +1577,13 @@ bool CGame::Draw() {
 	// land with the CProjectileDrawer port.
 	if (metalProjectiles && metalProjectiles->IsValid())
 		metalProjectiles->Draw();
+
+	// Selection rings on the ground + camera-billboarded health bars
+	// above hurt / own-team units. After projectiles so markers read
+	// on top of tracer glow, before the minimap which sits in screen
+	// space and shouldn't be obscured by them.
+	if (metalSelectionMarkers && metalSelectionMarkers->IsValid())
+		metalSelectionMarkers->Draw();
 
 	// Bottom-left minimap with team-coloured unit dots. Drawn last so
 	// it sits on top of the world geometry, before the debug HUD

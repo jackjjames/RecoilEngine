@@ -9,27 +9,23 @@
 
 class IBuffer;
 class IShaderPipeline;
+class ITexture;
 struct S3DModel;
 
-// Minimum-viable 3D unit drawer. For every active unit whose model has
-// geometry attached, draws the model as a flat-shaded grey mesh in the
-// unit's bind pose at the unit's world transform. Lazily uploads one
-// set of vertex / index buffers per unique S3DModel pointer (commander
-// spawns for every team share the same model so this is the granularity
-// that matters in practice).
+// 3D unit + feature drawer. For every active unit / feature whose model
+// has geometry attached, draws the model in the bind pose at the unit's
+// world transform with diffuse texture sampling and alpha-mask team
+// colour replacement (matches GL's springcontent ModelFragProg.glsl
+// convention: alpha=0 keeps diffuse, alpha=1 swaps to team colour).
+// Lazily uploads one vertex / index buffer pair per S3DModel pointer.
 //
-// Intentionally missing for this slice (S9-C4a):
+// Intentionally missing:
 //   - per-piece animation; the LocalModel tree is ignored and pieces are
-//     drawn in bind pose only.
-//   - team colouring; output is pure grey-lit.
-//   - texturing; we use a constant material in the fragment shader.
-//   - LOD + frustum culling; every active unit is submitted every frame.
-//   - shadows / deferred path.
-//
-// S9-C4b picks up team colour + simple texture sampling from the S3O
-// atlas; full animation / per-piece transforms + transformsUploader SSBO
-// parity lands after the projectile + feature drawers (they also want
-// that path).
+//     drawn in bind pose only. Lands with TransformsUploader + an SSBO of
+//     piece matrices (S9-C4b part 2).
+//   - tex2 / specular / self-illumination sampling.
+//   - LOD + frustum culling; every active object is submitted every frame.
+//   - shadow pass (S9-C5a).
 class MetalUnitMesh
 {
 public:
@@ -57,6 +53,7 @@ private:
 
 	std::unique_ptr<IShaderPipeline>            pipeline;
 	std::unique_ptr<IBuffer>                    uniformBuffer;
+	std::unique_ptr<ITexture>                   whiteTexture;
 	std::unordered_map<const S3DModel*, ModelBuffers> modelCache;
 
 	bool valid = false;

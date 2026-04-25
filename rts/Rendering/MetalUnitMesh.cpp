@@ -15,6 +15,8 @@
 #include "Rendering/Models/3DModelPiece.hpp"
 #include "Rendering/Models/VertexData.hpp"
 #include "Rendering/Shaders/IShaderPipeline.h"
+#include "Rendering/Textures/ITexture.h"
+#include "Rendering/Textures/S3OTextureHandler.h"
 #include "Sim/Features/Feature.h"
 #include "Sim/Features/FeatureHandler.h"
 #include "Sim/Misc/Team.h"
@@ -33,11 +35,12 @@
 namespace {
 
 // Compact per-vertex format. SVertexData carries tangents + UVs + bone
-// data we don't need for the first slice; strip to pos + normal so the
-// Metal vertex buffer is a third of the size of the GL interleaved one.
+// data we don't need for this slice; strip to pos + normal + uv0 so
+// the Metal vertex buffer is half the size of the GL interleaved one.
 struct UnitVertex {
 	float px, py, pz;
 	float nx, ny, nz;
+	float u, v;
 };
 
 struct alignas(16) UBOLayout {
@@ -51,24 +54,28 @@ struct alignas(16) UBOLayout {
 constexpr const char* kVertexGlsl = R"(#version 450
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec2 aUV0;
 
 layout(location = 0) out vec3 vNormalWS;
+layout(location = 1) out vec2 vUV;
 
 layout(set = 0, binding = 0) uniform UBO {
     mat4 uViewProj;
     mat4 uModel;
     vec4 uSunDir;      // world-space light direction
-    vec4 uMaterialRGB; // unused here, sampled in FS
+    vec4 uMaterialRGB; // team colour for the alpha-mask channel
 } ubo;
 
 void main() {
     vNormalWS = mat3(ubo.uModel) * aNormal;
+    vUV = aUV0;
     gl_Position = ubo.uViewProj * ubo.uModel * vec4(aPos, 1.0);
 }
 )";
 
 constexpr const char* kFragmentGlsl = R"(#version 450
 layout(location = 0) in vec3 vNormalWS;
+layout(location = 1) in vec2 vUV;
 layout(location = 0) out vec4 fragColor;
 
 layout(set = 0, binding = 0) uniform UBO {
@@ -78,13 +85,27 @@ layout(set = 0, binding = 0) uniform UBO {
     vec4 uMaterialRGB;
 } ubo;
 
+layout(set = 0, binding = 1) uniform sampler2D uDiffuse;
+
 void main() {
+    // S3O convention (matches GLSL/ModelFragProg.glsl): texture alpha
+    // = team-mask weight. alpha=0 keeps the diffuse texel, alpha=1
+    // overrides with the team colour. Most BAR commanders / factories
+    // texture the body and reserve alpha=1 for trim, accents and
+    // logos.
+    // S3O convention (matches GLSL/ModelFragProg.glsl): texture alpha
+    // = team-mask weight. alpha=0 keeps the diffuse texel, alpha=1
+    // overrides with the team colour. Most BAR commanders / factories
+    // texture the body and reserve alpha=1 for trim, accents and
+    // logos.
+    vec4 diff = texture(uDiffuse, vUV);
+    vec3 albedo = mix(diff.rgb, ubo.uMaterialRGB.rgb, diff.a);
+
     vec3 N = normalize(vNormalWS);
     vec3 L = normalize(ubo.uSunDir.xyz);
     float diffuse = max(dot(N, L), 0.0);
     float ambient = 0.35 + 0.15 * max(N.y, 0.0);
-    vec3 col = ubo.uMaterialRGB.rgb * (ambient + diffuse * 0.7);
-    fragColor = vec4(col, 1.0);
+    fragColor = vec4(albedo * (ambient + diffuse * 0.7), 1.0);
 }
 )";
 
@@ -136,6 +157,7 @@ bool FlattenModelBindPose(const S3DModel* model,
 			verts.push_back(UnitVertex{
 				p.x, p.y, p.z,
 				n.x, n.y, n.z,
+				v.texCoords[0].x, v.texCoords[0].y,
 			});
 		}
 
@@ -155,6 +177,26 @@ MetalUnitMesh::MetalUnitMesh()
 	if (globalRendering == nullptr || globalRendering->renderBackend == nullptr)
 		return;
 	auto& backend = *globalRendering->renderBackend;
+
+	// 1x1 fallback so models with no resident diffuse read something
+	// deterministic instead of an undefined sampler. RGB=grey lets
+	// the lambert lighting pick up shape; alpha=1 forces the
+	// team-mask path in the FS so the unit gets fully tinted with
+	// the team colour - that's a closer approximation than rendering
+	// flat grey when texture loading fails.
+	GL::TextureCreationParams whiteParams;
+	whiteParams.linearMipMapFilter = false;
+	whiteParams.linearTextureFilter = false;
+	whiteParams.wrapMirror = false;
+	whiteParams.reqNumLevels = 1;
+	whiteTexture = backend.CreateTexture2D(
+		int2(1, 1), 0x8058 /*GL_RGBA8*/, whiteParams, /*wantCompress=*/false);
+	if (whiteTexture && whiteTexture->IsValid()) {
+		const uint8_t fallback[4] = {200, 200, 200, 255};
+		whiteTexture->Bind();
+		whiteTexture->UploadImage(fallback);
+		whiteTexture->Unbind();
+	}
 
 	UBOLayout seed{};
 	seed.viewProj[0]  = 1.0f; seed.viewProj[5]  = 1.0f;
@@ -178,6 +220,7 @@ MetalUnitMesh::MetalUnitMesh()
 	pd.vertexAttributes = {
 		VertexAttribute{ .location = 0, .bufferSlot = 0, .offset = offsetof(UnitVertex, px), .format = VertexFormat::Float3 },
 		VertexAttribute{ .location = 1, .bufferSlot = 0, .offset = offsetof(UnitVertex, nx), .format = VertexFormat::Float3 },
+		VertexAttribute{ .location = 2, .bufferSlot = 0, .offset = offsetof(UnitVertex, u),  .format = VertexFormat::Float2 },
 	};
 	pd.vertexBindings = {
 		VertexBindingLayout{ .slot = 0, .stride = sizeof(UnitVertex) },
@@ -271,7 +314,18 @@ void MetalUnitMesh::Draw()
 
 		uniformBuffer->UpdateData(&ubo, sizeof(ubo), 0);
 
+		ITexture* diffuse = nullptr;
+		if (so->model->textureType > 0) {
+			const auto* mat = textureHandlerS3O.GetTexture(so->model->textureType);
+			if (mat != nullptr)
+				diffuse = mat->tex1;
+		}
+		if (diffuse == nullptr || !diffuse->IsValid())
+			diffuse = whiteTexture.get();
+
 		pipeline->BindUniformBuffer(0, *uniformBuffer, 0, sizeof(ubo));
+		if (diffuse != nullptr)
+			pipeline->BindTexture(1, *diffuse);
 		pipeline->BindVertexBuffer(0, *mb->vertexBuffer);
 		pipeline->DrawIndexed(PrimitiveTopology::Triangles, mb->indexCount,
 			IndexType::Uint32, *mb->indexBuffer);
@@ -286,11 +340,9 @@ void MetalUnitMesh::Draw()
 		// thread synchronously with Draw, so pos is already the
 		// "current frame" value; no interpolation smoothness to lose
 		// yet.
-		// Per-unit team colour. The GL build replaces the alpha=0
-		// pixels in the texture with this colour via the team-mask
-		// channel; until S3O texture sampling lands here we tint the
-		// whole model. CUnit.team -> CTeam.color is the same source
-		// of truth the GL path uses.
+		// Per-unit team colour - this is the input to the alpha-mask
+		// replacement in the FS, not a flat tint. CUnit.team ->
+		// CTeam.color is the same source of truth the GL path uses.
 		float r = 0.65f, g = 0.65f, b = 0.65f;
 		if (teamHandler.IsValidTeam(u->team)) {
 			const uint8_t* c = teamHandler.Team(u->team)->color;

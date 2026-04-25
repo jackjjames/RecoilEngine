@@ -17,6 +17,7 @@
 
 #import <Metal/Metal.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -87,6 +88,14 @@ id<MTLSamplerState> BuildSampler(id<MTLDevice> device, const GL::TextureCreation
 	return [device newSamplerStateWithDescriptor:desc];
 }
 
+// Sequential synthetic IDs handed out at MetalTexture construction. Two
+// consumers care: (1) S3OTextureHandler keys (tex1, tex2) materials by
+// (GetNativeId(), GetNativeId()) so when both are 0 every model collapses
+// onto the same textureType, breaking per-model texture sampling; (2)
+// CTextureRenderAtlas + a few legacy consumers compare by ID for
+// invalidation. Starting at 1 reserves 0 for "no texture / invalid".
+static std::atomic<uint32_t> g_metalTextureIdCounter{1};
+
 class MetalTexture final : public ITexture
 {
 public:
@@ -95,6 +104,7 @@ public:
 		, internalFormat(internalFormat_)
 		, numLevels(numLevels_)
 		, numPages(numPages_)
+		, syntheticId(g_metalTextureIdCounter.fetch_add(1, std::memory_order_relaxed))
 	{
 		id<MTLDevice> device = (__bridge id<MTLDevice>)MetalGlobals::GetDevice();
 		if (device == nil || size.x <= 0 || size.y <= 0)
@@ -131,7 +141,7 @@ public:
 	}
 
 	bool IsValid() const override { return texture != nil; }
-	uint32_t GetNativeId() const override { return 0; }
+	uint32_t GetNativeId() const override { return syntheticId; }
 	uint32_t GetTarget() const override { return kGL_TEXTURE_2D; }
 	uint32_t GetInternalFormat() const override { return internalFormat; }
 	uint32_t GetNumPages() const override { return numPages; }
@@ -212,6 +222,7 @@ private:
 	uint32_t internalFormat = 0;
 	int32_t numLevels = 1;
 	uint32_t numPages = 1;
+	uint32_t syntheticId = 0;
 	MtlFormatInfo formatInfo{};
 
 	id<MTLTexture> texture = nil;

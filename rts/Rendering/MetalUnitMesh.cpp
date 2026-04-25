@@ -15,6 +15,8 @@
 #include "Rendering/Models/3DModelPiece.hpp"
 #include "Rendering/Models/VertexData.hpp"
 #include "Rendering/Shaders/IShaderPipeline.h"
+#include "Sim/Misc/Team.h"
+#include "Sim/Misc/TeamHandler.h"
 #include "Sim/Units/Unit.h"
 #include "Sim/Units/UnitHandler.h"
 #include "System/Log/ILog.h"
@@ -249,9 +251,6 @@ void MetalUnitMesh::Draw()
 	if (skyPtr != nullptr && skyPtr->GetLight() != nullptr)
 		sunDir = skyPtr->GetLight()->GetLightDir();
 	ubo.sunDir[0] = sunDir.x; ubo.sunDir[1] = sunDir.y; ubo.sunDir[2] = sunDir.z;
-	ubo.materialRGB[0] = 0.65f;
-	ubo.materialRGB[1] = 0.65f;
-	ubo.materialRGB[2] = 0.65f;
 
 	pipeline->Enable();
 
@@ -274,6 +273,22 @@ void MetalUnitMesh::Draw()
 		// interpolation smoothness to lose yet.
 		const CMatrix44f model = u->ComposeMatrix(u->pos);
 		std::memcpy(ubo.model, model.m, sizeof(ubo.model));
+
+		// Per-unit team colour. The GL build replaces the alpha=0
+		// pixels in the texture with this colour via the team-mask
+		// channel; until S3O texture sampling is wired up here we
+		// just tint the whole model. CUnit.team -> CTeam.color is
+		// the same source of truth the GL path uses.
+		float tr = 0.65f, tg = 0.65f, tb = 0.65f;
+		if (teamHandler.IsValidTeam(u->team)) {
+			const uint8_t* c = teamHandler.Team(u->team)->color;
+			tr = c[0] * (1.0f / 255.0f);
+			tg = c[1] * (1.0f / 255.0f);
+			tb = c[2] * (1.0f / 255.0f);
+		}
+		ubo.materialRGB[0] = tr;
+		ubo.materialRGB[1] = tg;
+		ubo.materialRGB[2] = tb;
 
 		uniformBuffer->UpdateData(&ubo, sizeof(ubo), 0);
 

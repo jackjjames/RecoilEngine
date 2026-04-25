@@ -41,11 +41,16 @@ void MaybeSnapToStartPos()
 	// does on the GL side. Goes away with S9-C6.
 	CCameraController::StateMap sm;
 	cc.GetState(sm);
-	sm["dist"] = 1500.0f;
+	// Pull in to ~700 units so a commander reads at a recognisable
+	// silhouette (tens of px tall) instead of a sub-10-px speck.
+	// Anything closer starts clipping pieces against the near plane
+	// on tall units like factories.
+	sm["dist"] = 700.0f;
 	// rot.x = pitch from world up; SpringController clamps to
-	// (PI*0.51, PI*0.99). PI*0.7 ~= 2.20 rad gives a 3/4 isometric
-	// tilt that shows units' silhouettes instead of pure-tops.
-	sm["rx"] = 2.20f;
+	// (PI*0.51, PI*0.99). PI*0.62 ~= 1.95 rad gives a slightly
+	// flatter 3/4 isometric than 2.20 - reads more like the GL
+	// build's default skirmish camera.
+	sm["rx"] = 1.95f;
 	cc.SetState(sm);
 	camHandler->CameraTransition(0.0f);
 	didSnap = true;

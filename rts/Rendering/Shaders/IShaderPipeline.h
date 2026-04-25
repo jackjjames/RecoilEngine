@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Rendering/IBuffer.h"
+#include "Rendering/IRenderTarget.h"
 
 namespace Shader {
 	struct IShaderObject;
@@ -79,6 +80,13 @@ struct PipelineDesc
 	// declarations still drive attribute routing but the buffer slot is
 	// chosen here. Matches `slot` inside VertexBindingLayout; ignored on GL.
 	uint32_t metalVertexBufferBaseSlot = 30;
+
+	// Metal-only: optional fixed-function colour-attachment blend state
+	// baked into the pipeline at link time. Defaults to disabled (opaque
+	// writes). On the GL backend this is configured separately through
+	// IRenderTarget::SetBlendState; here it has to live on the pipeline
+	// because MTLRenderPipelineState is immutable once created.
+	RenderTargetBlendState blendState;
 };
 
 enum class PrimitiveTopology

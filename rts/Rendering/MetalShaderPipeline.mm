@@ -32,6 +32,28 @@ MTLVertexFormat ToMtlVertexFormat(VertexFormat fmt)
 	return MTLVertexFormatFloat4;
 }
 
+// Map the GL-style blend factor enums RenderTargetBlendState carries onto
+// MTLBlendFactor. Only covers the subset used by the Metal-side passes
+// today (decals + alpha-blended HUD + particles); add new enums as fresh
+// callers materialise rather than upfront.
+MTLBlendFactor ToMtlBlendFactor(GLenum gl)
+{
+	switch (gl) {
+		case GL_ZERO:                     return MTLBlendFactorZero;
+		case GL_ONE:                      return MTLBlendFactorOne;
+		case GL_SRC_COLOR:                return MTLBlendFactorSourceColor;
+		case GL_ONE_MINUS_SRC_COLOR:      return MTLBlendFactorOneMinusSourceColor;
+		case GL_DST_COLOR:                return MTLBlendFactorDestinationColor;
+		case GL_ONE_MINUS_DST_COLOR:      return MTLBlendFactorOneMinusDestinationColor;
+		case GL_SRC_ALPHA:                return MTLBlendFactorSourceAlpha;
+		case GL_ONE_MINUS_SRC_ALPHA:      return MTLBlendFactorOneMinusSourceAlpha;
+		case GL_DST_ALPHA:                return MTLBlendFactorDestinationAlpha;
+		case GL_ONE_MINUS_DST_ALPHA:      return MTLBlendFactorOneMinusDestinationAlpha;
+		case GL_SRC_ALPHA_SATURATE:       return MTLBlendFactorSourceAlphaSaturated;
+	}
+	return MTLBlendFactorOne;
+}
+
 bool CompileStage(id<MTLDevice> device, Shader::Stage stage, const std::string& glsl,
                   id<MTLLibrary>* libOut, id<MTLFunction>* fnOut, std::string& log)
 {
@@ -117,6 +139,15 @@ public:
 		// diverges from the layer (offscreen RT etc.), callers will need
 		// to describe that through PipelineDesc.
 		pipelineDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+		if (desc.blendState.enabled) {
+			pipelineDesc.colorAttachments[0].blendingEnabled             = YES;
+			pipelineDesc.colorAttachments[0].sourceRGBBlendFactor        = ToMtlBlendFactor(desc.blendState.srcColor);
+			pipelineDesc.colorAttachments[0].destinationRGBBlendFactor   = ToMtlBlendFactor(desc.blendState.dstColor);
+			pipelineDesc.colorAttachments[0].sourceAlphaBlendFactor      = ToMtlBlendFactor(desc.blendState.srcAlpha);
+			pipelineDesc.colorAttachments[0].destinationAlphaBlendFactor = ToMtlBlendFactor(desc.blendState.dstAlpha);
+			pipelineDesc.colorAttachments[0].rgbBlendOperation           = MTLBlendOperationAdd;
+			pipelineDesc.colorAttachments[0].alphaBlendOperation         = MTLBlendOperationAdd;
+		}
 
 		// Build an MTLVertexDescriptor when the caller described a vertex
 		// layout. Empty layout (no attributes + no bindings) leaves

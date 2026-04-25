@@ -64,6 +64,7 @@ private:
 	std::unique_ptr<IShaderPipeline>            pipeline;
 	std::unique_ptr<IBuffer>                    uniformBuffer;
 	std::unique_ptr<ITexture>                   whiteTexture;
+	std::unique_ptr<ITexture>                   blackTexture;
 	std::unordered_map<const S3DModel*, ModelBuffers> modelCache;
 
 	bool valid = false;

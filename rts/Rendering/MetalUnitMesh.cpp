@@ -49,6 +49,7 @@ struct alignas(16) UBOLayout {
 	float model[16];
 	float sunDir[4];     // xyz + unused w
 	float materialRGB[4];// rgb + unused w; per-draw recolour knob
+	float camPos[4];     // xyz + unused w; world-space view origin
 };
 
 
@@ -59,24 +60,29 @@ layout(location = 2) in vec2 aUV0;
 
 layout(location = 0) out vec3 vNormalWS;
 layout(location = 1) out vec2 vUV;
+layout(location = 2) out vec3 vWorldPos;
 
 layout(set = 0, binding = 0) uniform UBO {
     mat4 uViewProj;
     mat4 uModel;
     vec4 uSunDir;      // world-space light direction
     vec4 uMaterialRGB; // team colour for the alpha-mask channel
+    vec4 uCamPos;
 } ubo;
 
 void main() {
     vNormalWS = mat3(ubo.uModel) * aNormal;
     vUV = aUV0;
-    gl_Position = ubo.uViewProj * ubo.uModel * vec4(aPos, 1.0);
+    vec4 worldH = ubo.uModel * vec4(aPos, 1.0);
+    vWorldPos = worldH.xyz;
+    gl_Position = ubo.uViewProj * worldH;
 }
 )";
 
 constexpr const char* kFragmentGlsl = R"(#version 450
 layout(location = 0) in vec3 vNormalWS;
 layout(location = 1) in vec2 vUV;
+layout(location = 2) in vec3 vWorldPos;
 layout(location = 0) out vec4 fragColor;
 
 layout(set = 0, binding = 0) uniform UBO {
@@ -84,24 +90,43 @@ layout(set = 0, binding = 0) uniform UBO {
     mat4 uModel;
     vec4 uSunDir;
     vec4 uMaterialRGB;
+    vec4 uCamPos;
 } ubo;
 
 layout(set = 0, binding = 1) uniform sampler2D uDiffuse;
+layout(set = 0, binding = 2) uniform sampler2D uExtra;   // S3O tex2: R=emissive, G=spec mask, A=mask
 
 void main() {
-    // S3O convention (matches GLSL/ModelFragProg.glsl): texture alpha
-    // = team-mask weight. alpha=0 keeps the diffuse texel, alpha=1
-    // overrides with the team colour. Most BAR commanders / factories
-    // texture the body and reserve alpha=1 for trim, accents and
-    // logos.
-    vec4 diff = texture(uDiffuse, vUV);
+    // S3O convention (matches GLSL/ModelFragProg.glsl): tex1.a is the
+    // team-mask weight (alpha=0 keeps the diffuse texel, alpha=1
+    // overrides with the team colour); tex2 carries R=emissive,
+    // G=specular intensity, A=opacity bit. Most BAR commanders /
+    // factories texture the body and reserve alpha=1 for trim,
+    // accents and logos.
+    vec4 diff  = texture(uDiffuse, vUV);
+    vec4 extra = texture(uExtra,   vUV);
     vec3 albedo = mix(diff.rgb, ubo.uMaterialRGB.rgb, diff.a);
 
     vec3 N = normalize(vNormalWS);
     vec3 L = normalize(ubo.uSunDir.xyz);
-    float diffuse = max(dot(N, L), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
     float ambient = 0.35 + 0.15 * max(N.y, 0.0);
-    fragColor = vec4(albedo * (ambient + diffuse * 0.7), 1.0);
+    vec3 lit = albedo * (ambient + NdotL * 0.7);
+
+    // Phong specular. Cubemap-based env reflections (GL ModelFragProg
+    // uses `specular = textureCube(reflectTex, ...) * sunSpecular`)
+    // are deferred until S9-C5b lands a real sky cubemap; until then
+    // the sun-specular term gives metallic pieces (turret barrels,
+    // canopies) a recognisable highlight.
+    vec3 V = normalize(ubo.uCamPos.xyz - vWorldPos);
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(N, H), 0.0), 24.0) * extra.g * 4.0 * NdotL;
+
+    // R channel doubles as a self-illum mask: glow trim stays bright
+    // even in shadow, matches the GL path's `reflection += extra.rrr`.
+    vec3 emissive = vec3(extra.r);
+
+    fragColor = vec4(lit + spec + emissive, 1.0);
 }
 )";
 
@@ -164,6 +189,21 @@ MetalUnitMesh::MetalUnitMesh()
 		whiteTexture->Bind();
 		whiteTexture->UploadImage(fallback);
 		whiteTexture->Unbind();
+	}
+
+	// Black 1x1 stand-in for tex2 when a model has no extra/spec
+	// texture. RGBA=0 means no emissive, no specular response, full
+	// (alpha-mask) opacity from the diffuse path: the unit just falls
+	// back to pure lambert + ambient. Same TextureCreationParams as
+	// `whiteTexture` because the sampler doesn't care about content,
+	// only that *something* is bound.
+	blackTexture = backend.CreateTexture2D(
+		int2(1, 1), 0x8058 /*GL_RGBA8*/, whiteParams, /*wantCompress=*/false);
+	if (blackTexture && blackTexture->IsValid()) {
+		const uint8_t zero[4] = {0, 0, 0, 255};
+		blackTexture->Bind();
+		blackTexture->UploadImage(zero);
+		blackTexture->Unbind();
 	}
 
 	UBOLayout seed{};
@@ -276,6 +316,9 @@ void MetalUnitMesh::Draw()
 	UBOLayout ubo{};
 	std::memcpy(ubo.viewProj, cam->GetViewProjectionMatrix().m, sizeof(ubo.viewProj));
 
+	const float3 camPos = cam->GetPos();
+	ubo.camPos[0] = camPos.x; ubo.camPos[1] = camPos.y; ubo.camPos[2] = camPos.z;
+
 	float4 sunDir = float4(0.3f, 0.85f, 0.4f, 0.0f);
 	const auto& skyPtr = ISky::GetSky();
 	if (skyPtr != nullptr && skyPtr->GetLight() != nullptr)
@@ -293,16 +336,22 @@ void MetalUnitMesh::Draw()
 		if (!so->localModel.Initialized())
 			return;
 
-		// Diffuse + team colour are constant across all pieces of one
-		// solid; bind them once before walking the piece tree.
+		// Diffuse + extra (tex2) + team colour are constant across all
+		// pieces of one solid; resolve them once before walking the
+		// piece tree.
 		ITexture* diffuse = nullptr;
+		ITexture* extra   = nullptr;
 		if (so->model->textureType > 0) {
 			const auto* mat = textureHandlerS3O.GetTexture(so->model->textureType);
-			if (mat != nullptr)
+			if (mat != nullptr) {
 				diffuse = mat->tex1;
+				extra   = mat->tex2;
+			}
 		}
 		if (diffuse == nullptr || !diffuse->IsValid())
 			diffuse = whiteTexture.get();
+		if (extra == nullptr || !extra->IsValid())
+			extra = blackTexture.get();
 
 		ubo.materialRGB[0] = matR;
 		ubo.materialRGB[1] = matG;
@@ -336,6 +385,8 @@ void MetalUnitMesh::Draw()
 			pipeline->BindUniformBuffer(0, *uniformBuffer, 0, sizeof(ubo));
 			if (diffuse != nullptr)
 				pipeline->BindTexture(1, *diffuse);
+			if (extra != nullptr)
+				pipeline->BindTexture(2, *extra);
 			pipeline->BindVertexBuffer(0, *pb.vertexBuffer);
 			pipeline->DrawIndexed(PrimitiveTopology::Triangles, pb.indexCount,
 				IndexType::Uint32, *pb.indexBuffer);

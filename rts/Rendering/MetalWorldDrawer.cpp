@@ -16,6 +16,7 @@
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/IBuffer.h"
 #include "Rendering/IRenderBackend.h"
+#include "Rendering/MetalGroundTextures.h"
 #include "Rendering/Shaders/IShaderPipeline.h"
 #include "Rendering/Textures/ITexture.h"
 #include "Rendering/Textures/MetalDXTDecoder.h"
@@ -64,6 +65,8 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     vec4 uCornerSizeXY_InvCornerSizeXY;
     vec4 uCamPos;          // xyz, w = fog density (1 / fogFar)
     vec4 uHorizonColor;    // sky horizon to blend distant terrain into
+    vec4 uTileGrid;        // x = tilesPerRow, y = tilesPerCol, z = tileMapSizeX, w = tileMapSizeY
+    vec4 uTileFlags;       // x = haveTiles (0/1), yzw unused
 } ubo;
 
 layout(set = 0, binding = 1) uniform sampler2D uHeight;
@@ -91,11 +94,43 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     vec4 uCornerSizeXY_InvCornerSizeXY;
     vec4 uCamPos;
     vec4 uHorizonColor;
+    vec4 uTileGrid;        // x = tilesPerRow, y = tilesPerCol, z = tileMapSizeX, w = tileMapSizeY
+    vec4 uTileFlags;       // x = haveTiles (0/1)
 } ubo;
 
 layout(set = 0, binding = 1) uniform sampler2D uHeight;
 layout(set = 0, binding = 2) uniform sampler2D uDiffuse;
 layout(set = 0, binding = 3) uniform sampler2D uNormals;
+layout(set = 0, binding = 4) uniform sampler2D uTileAtlas;
+layout(set = 0, binding = 5) uniform sampler2D uTileIndex;
+
+// Sample the SMF tiled-diffuse atlas at world UV. Maps mapUV to a
+// per-cell index via uTileIndex (NEAREST), then reconstructs the
+// per-tile sub-UV inside the atlas. A 1-pixel inset prevents the
+// atlas's bilinear filter from bleeding across tile borders.
+vec3 SampleTiledDiffuse(vec2 mapUV)
+{
+    vec2 tileMapSize = ubo.uTileGrid.zw;
+    vec2 cellPos     = mapUV * tileMapSize;
+    vec2 cellUV      = (floor(cellPos) + 0.5) / tileMapSize;
+    float idxF       = textureLod(uTileIndex, cellUV, 0.0).r;
+    float idx        = floor(idxF + 0.5);
+
+    float tilesPerRow = ubo.uTileGrid.x;
+    float tilesPerCol = ubo.uTileGrid.y;
+    float tx = mod(idx, tilesPerRow);
+    float ty = floor(idx / tilesPerRow);
+
+    vec2 subUV = fract(cellPos);
+    // 1 / 32 pixel inset per side keeps bilinear filtering inside
+    // the tile - drops the seam artefact when zoomed in.
+    subUV = clamp(subUV, vec2(1.0 / 64.0), vec2(63.0 / 64.0));
+
+    vec2 atlasUV;
+    atlasUV.x = (tx + subUV.x) / tilesPerRow;
+    atlasUV.y = (ty + subUV.y) / tilesPerCol;
+    return texture(uTileAtlas, atlasUV).rgb;
+}
 
 // Cheap value-noise hash. Two-octave sum gives a recognisable
 // crease/dust pattern at the texel scale without sampling any extra
@@ -138,12 +173,17 @@ vec3 ComputeTerrainNormalFromHeight(vec2 uv)
 }
 
 void main() {
-    // Albedo: SMF minimap as full-map diffuse surrogate (see
-    // MetalWorldDrawer for the load path). Falls back to a hypsometric
-    // band when no minimap is available (synthetic test maps).
+    // Albedo source priority:
+    //   1) SMF tiled diffuse from the .smt file (real per-cell
+    //      ground textures, S9-C3c)
+    //   2) SMF minimap top mip as full-map diffuse stand-in
+    //   3) Hypsometric height-band ramp (synthetic test maps)
+    float haveTiles   = ubo.uTileFlags.x;
     float haveDiffuse = ubo.uMinHeight_MaxHeight_HaveDiffuse_HaveNormals.z;
     vec3 albedo;
-    if (haveDiffuse > 0.5) {
+    if (haveTiles > 0.5) {
+        albedo = SampleTiledDiffuse(vUV);
+    } else if (haveDiffuse > 0.5) {
         albedo = texture(uDiffuse, vUV).rgb;
     } else {
         float minH = ubo.uMinHeight_MaxHeight_HaveDiffuse_HaveNormals.x;
@@ -179,16 +219,20 @@ void main() {
     float half_lambert = 0.5 * ndl + 0.5 * max(dot(N, L), -0.2);
     float diffuse = clamp(half_lambert, 0.0, 1.0);
 
-    // Two-octave detail noise sampled in world XZ space. Modulates
-    // albedo brightness only (no chroma shift) so a desert reads as
-    // dusty desert and a green map as patchy grass; the SMF tiled
-    // diffuse path (S9-C3c) replaces this with real ground textures
-    // once it lands.
-    float n0 = ValueNoise(vWorldPos.xz * 0.07);
-    float n1 = ValueNoise(vWorldPos.xz * 0.31 + 17.0);
-    float detail = n0 * 0.65 + n1 * 0.35;
-    detail = mix(0.82, 1.18, detail);
-    vec3 detailedAlbedo = albedo * detail;
+    // Two-octave detail noise sampled in world XZ space. Skipped
+    // when SMF tiled diffuse is active because the per-cell ground
+    // tiles already carry real surface detail; only the minimap /
+    // hypsometric paths need this to mask their low-frequency
+    // smoothness. Modulates brightness only (no chroma shift) so a
+    // desert reads as dusty desert and a green map as patchy grass.
+    vec3 detailedAlbedo = albedo;
+    if (haveTiles < 0.5) {
+        float n0 = ValueNoise(vWorldPos.xz * 0.07);
+        float n1 = ValueNoise(vWorldPos.xz * 0.31 + 17.0);
+        float detail = n0 * 0.65 + n1 * 0.35;
+        detail = mix(0.82, 1.18, detail);
+        detailedAlbedo = albedo * detail;
+    }
 
     vec3 sunColor = vec3(1.00, 0.96, 0.88);
     vec3 ambColor = vec3(0.35, 0.38, 0.45);
@@ -220,6 +264,8 @@ struct alignas(16) CameraUBOLayout {
 	float cornerSize[4];        // cornersX, cornersZ, 1/cornersX, 1/cornersZ
 	float camPos[4];            // xyz, w = fog density (1 / fogFar)
 	float horizonColor[4];      // ties terrain fade to MetalSkyPass horizon
+	float tileGrid[4];          // tilesPerRow, tilesPerCol, tileMapSizeX, tileMapSizeY
+	float tileFlags[4];         // x = haveTiles (0 / 1)
 };
 
 
@@ -437,6 +483,17 @@ MetalWorldDrawer::MetalWorldDrawer()
 		}
 	}
 
+	// --- SMF tiled diffuse. Optional: when the .smt files load
+	// successfully MetalGroundTextures owns an atlas + per-cell
+	// index lookup that replaces the minimap-as-diffuse stand-in.
+	// Falls back silently on non-SMF maps or when the atlas would
+	// exceed the texture-dimension cap; the fragment shader keys
+	// off uTileFlags.x to pick the right path.
+	groundTextures = std::make_unique<MetalGroundTextures>();
+	if (!groundTextures->IsValid()) {
+		groundTextures.reset();
+	}
+
 	// --- Pre-baked per-texel center normals. One RGB8 per heightmap
 	// square (mapx x mapy). Sampled at aUV with linear filtering so
 	// the shading between texels blends smoothly. Caller must fall
@@ -574,6 +631,13 @@ void MetalWorldDrawer::Draw() const
 	ubo.horizonColor[2] = horizon.z;
 	ubo.horizonColor[3] = 1.0f;
 
+	const bool haveTiles = (groundTextures != nullptr) && groundTextures->IsValid();
+	ubo.tileGrid[0] = haveTiles ? static_cast<float>(groundTextures->GetTilesPerRow())   : 1.0f;
+	ubo.tileGrid[1] = haveTiles ? static_cast<float>(groundTextures->GetTilesPerCol())   : 1.0f;
+	ubo.tileGrid[2] = haveTiles ? static_cast<float>(groundTextures->GetTileMapSizeX())  : 1.0f;
+	ubo.tileGrid[3] = haveTiles ? static_cast<float>(groundTextures->GetTileMapSizeY())  : 1.0f;
+	ubo.tileFlags[0] = haveTiles ? 1.0f : 0.0f;
+
 	uniformBuffer->UpdateData(&ubo, sizeof(ubo), 0);
 
 	pipeline->Enable();
@@ -587,6 +651,16 @@ void MetalWorldDrawer::Draw() const
 		pipeline->BindTexture(3, *normalsTexture);
 	else
 		pipeline->BindTexture(3, *heightmapTexture);   // placeholder - fragment won't sample it (haveNormals=0)
+	if (haveTiles && groundTextures->GetAtlasTexture() != nullptr) {
+		pipeline->BindTexture(4, *groundTextures->GetAtlasTexture());
+		pipeline->BindTexture(5, *groundTextures->GetTileIndexTexture());
+	} else {
+		// Placeholders so Metal's argument-buffer slot validation
+		// stays happy; the fragment shader gates the actual sample
+		// on uTileFlags.x.
+		pipeline->BindTexture(4, *heightmapTexture);
+		pipeline->BindTexture(5, *heightmapTexture);
+	}
 	pipeline->BindVertexBuffer(0, *vertexBuffer);
 	pipeline->DrawIndexed(PrimitiveTopology::Triangles, indexCount, IndexType::Uint32, *indexBuffer);
 	pipeline->Disable();

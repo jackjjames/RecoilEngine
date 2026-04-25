@@ -10,6 +10,7 @@
 class IBuffer;
 class IShaderPipeline;
 class ITexture;
+class MetalGroundTextures;
 
 // Stage 9 minimum-viable world drawer for the Metal backend. Builds a
 // flat XZ grid mesh at a fixed resolution and displaces Y in the
@@ -63,6 +64,14 @@ private:
 	// rims shade correctly. Same (u,v) addressing as the diffuse /
 	// heightmap textures.
 	std::unique_ptr<ITexture>        normalsTexture;
+
+	// SMF-tiled diffuse: atlas + per-cell tile-index lookup, loaded
+	// from the .smt file the map points at. When present the
+	// fragment shader prefers this over the minimap stand-in. Owned
+	// here so its lifetime tracks the world drawer's; nullptr on
+	// non-SMF maps or when the atlas would exceed Metal's texture
+	// dimension cap.
+	std::unique_ptr<MetalGroundTextures> groundTextures;
 
 	uint32_t indexCount       = 0;
 	int32_t  cachedCornersX   = 0;

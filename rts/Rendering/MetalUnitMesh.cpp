@@ -15,6 +15,8 @@
 #include "Rendering/Models/3DModelPiece.hpp"
 #include "Rendering/Models/VertexData.hpp"
 #include "Rendering/Shaders/IShaderPipeline.h"
+#include "Sim/Features/Feature.h"
+#include "Sim/Features/FeatureHandler.h"
 #include "Sim/Misc/Team.h"
 #include "Sim/Misc/TeamHandler.h"
 #include "Sim/Units/Unit.h"
@@ -254,41 +256,18 @@ void MetalUnitMesh::Draw()
 
 	pipeline->Enable();
 
-	for (const CUnit* u : active) {
-		if (u == nullptr || u->model == nullptr)
-			continue;
-		if (u->noDraw)
-			continue;
-
-		const ModelBuffers* mb = GetOrUploadModel(u->model);
+	auto drawSolid = [&](const CSolidObject* so, float matR, float matG, float matB) {
+		if (so == nullptr || so->model == nullptr)
+			return;
+		const ModelBuffers* mb = GetOrUploadModel(so->model);
 		if (mb == nullptr)
-			continue;
+			return;
 
-		// Unit transform: same ComposeMatrix the GL path uses
-		// (CUnit::GetTransformMatrix ends up here too). Sample synced
-		// `pos` rather than `drawPos` because the Metal build skips
-		// CUnitDrawerData::UpdateDrawPos for now, so drawPos is still
-		// ZeroVector. The sim ticks on the main thread synchronously
-		// with Draw, so pos is already the "current frame" value; no
-		// interpolation smoothness to lose yet.
-		const CMatrix44f model = u->ComposeMatrix(u->pos);
+		const CMatrix44f model = so->ComposeMatrix(so->pos);
 		std::memcpy(ubo.model, model.m, sizeof(ubo.model));
-
-		// Per-unit team colour. The GL build replaces the alpha=0
-		// pixels in the texture with this colour via the team-mask
-		// channel; until S3O texture sampling is wired up here we
-		// just tint the whole model. CUnit.team -> CTeam.color is
-		// the same source of truth the GL path uses.
-		float tr = 0.65f, tg = 0.65f, tb = 0.65f;
-		if (teamHandler.IsValidTeam(u->team)) {
-			const uint8_t* c = teamHandler.Team(u->team)->color;
-			tr = c[0] * (1.0f / 255.0f);
-			tg = c[1] * (1.0f / 255.0f);
-			tb = c[2] * (1.0f / 255.0f);
-		}
-		ubo.materialRGB[0] = tr;
-		ubo.materialRGB[1] = tg;
-		ubo.materialRGB[2] = tb;
+		ubo.materialRGB[0] = matR;
+		ubo.materialRGB[1] = matG;
+		ubo.materialRGB[2] = matB;
 
 		uniformBuffer->UpdateData(&ubo, sizeof(ubo), 0);
 
@@ -296,6 +275,44 @@ void MetalUnitMesh::Draw()
 		pipeline->BindVertexBuffer(0, *mb->vertexBuffer);
 		pipeline->DrawIndexed(PrimitiveTopology::Triangles, mb->indexCount,
 			IndexType::Uint32, *mb->indexBuffer);
+	};
+
+	for (const CUnit* u : active) {
+		if (u == nullptr || u->noDraw)
+			continue;
+		// Sample synced `pos` rather than `drawPos` because the Metal
+		// build skips CUnitDrawerData::UpdateDrawPos for now, so
+		// drawPos is still ZeroVector. The sim ticks on the main
+		// thread synchronously with Draw, so pos is already the
+		// "current frame" value; no interpolation smoothness to lose
+		// yet.
+		// Per-unit team colour. The GL build replaces the alpha=0
+		// pixels in the texture with this colour via the team-mask
+		// channel; until S3O texture sampling lands here we tint the
+		// whole model. CUnit.team -> CTeam.color is the same source
+		// of truth the GL path uses.
+		float r = 0.65f, g = 0.65f, b = 0.65f;
+		if (teamHandler.IsValidTeam(u->team)) {
+			const uint8_t* c = teamHandler.Team(u->team)->color;
+			r = c[0] * (1.0f / 255.0f);
+			g = c[1] * (1.0f / 255.0f);
+			b = c[2] * (1.0f / 255.0f);
+		}
+		drawSolid(u, r, g, b);
+	}
+
+	// Features (trees, rocks, wrecks). Same bind-pose path; team-tint
+	// would just paint trees green so we use a neutral earthy shade
+	// that's stable across feature classes. S3O texture sampling
+	// (S9-C4b part 3) lifts this onto the diffuse texel and team-mask
+	// channel for wrecks. Map-placed features come up through Lua's
+	// s11n_load_map_features gadget on BAR; this loop is empty until
+	// that gadget runs (S9-C6) and harmless in the meantime.
+	for (int id : featureHandler.GetActiveFeatureIDs()) {
+		const CFeature* f = featureHandler.GetFeature(id);
+		if (f == nullptr || f->noDraw)
+			continue;
+		drawSolid(f, 0.45f, 0.40f, 0.32f);
 	}
 
 	pipeline->Disable();

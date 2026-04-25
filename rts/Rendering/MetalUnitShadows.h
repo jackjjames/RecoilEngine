@@ -9,13 +9,14 @@
 class IBuffer;
 class IShaderPipeline;
 
-// Cheap fake-shadow drawer: for every active unit / feature, drops a
-// soft circular dark blob on the ground at its footprint. This is not
-// a real shadow map - the sun direction isn't sampled and tall
-// silhouettes don't elongate - but it's the single biggest "ground
-// contact" cue you can deliver without standing up render-to-texture
-// + a depth-only pre-pass. The proper sun-projected shadow pass
-// (S9-C5a part 2) replaces this once IRenderTarget grows real depth
+// Cheap fake-shadow drawer: for every active unit / feature, projects
+// the unit's bounding sphere onto the ground along the inverse sun
+// direction and draws a soft elliptical patch there. Not a real
+// shadow map - the silhouette isn't sampled and self-shadowing /
+// terrain-on-unit shadows don't appear - but the ellipse stretches
+// and rotates with the sun, which gives the scene strong directional
+// lighting context. The proper sun-projected shadow pass (S9-C5a
+// part 2) replaces this once IRenderTarget grows real depth
 // attachments on Metal.
 //
 // Drawn between the terrain and unit mesh passes so units overdraw

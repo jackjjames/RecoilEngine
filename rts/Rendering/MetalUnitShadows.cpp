@@ -7,6 +7,8 @@
 #include "Game/Camera.h"
 #include "Game/CameraHandler.h"
 #include "Map/Ground.h"
+#include "Rendering/Env/ISky.h"
+#include "Rendering/Env/SkyLight.h"
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/IBuffer.h"
 #include "Rendering/IRenderBackend.h"
@@ -17,6 +19,7 @@
 #include "Sim/Objects/SolidObject.h"
 #include "Sim/Units/Unit.h"
 #include "Sim/Units/UnitHandler.h"
+#include "System/float4.h"
 #include "System/Log/ILog.h"
 #include "System/Matrix44f.h"
 #include "System/float3.h"
@@ -80,24 +83,60 @@ void main() {
 // as if it sits on the ground.
 constexpr float kShadowLift = 0.4f;
 
+// Sun-projected shadow footprint. The unit's vertical extent (~radius)
+// gets projected onto the ground along -sunDir, which shifts the
+// centre and stretches the long axis in proportion to 1 / sunElev.
+// Low sun = long lazy shadow; noon sun = compact disc directly under
+// the unit.
 void EmitShadowQuad(std::vector<ShadowVertex>& verts,
                     std::vector<uint32_t>&     inds,
-                    const float3& centre, float radius)
+                    const float3& centre, float radius,
+                    const float3& sunDir)
 {
 	const uint32_t base = static_cast<uint32_t>(verts.size());
 
-	const float x0 = centre.x - radius, x1 = centre.x + radius;
-	const float z0 = centre.z - radius, z1 = centre.z + radius;
+	// Direction the shadow tip travels in across the ground (sun is a
+	// "to-light" vector, so the shadow points the opposite way).
+	float3 along(-sunDir.x, 0.0f, -sunDir.z);
+	const float alongLen = std::sqrt(along.x * along.x + along.z * along.z);
+	float dirX = 0.0f, dirZ = 1.0f;
+	if (alongLen > 1e-4f) {
+		dirX = along.x / alongLen;
+		dirZ = along.z / alongLen;
+	}
+	float3 perp(-dirZ, 0.0f, dirX);
 
-	const float y00 = CGround::GetHeightReal(x0, z0) + kShadowLift;
-	const float y10 = CGround::GetHeightReal(x1, z0) + kShadowLift;
-	const float y11 = CGround::GetHeightReal(x1, z1) + kShadowLift;
-	const float y01 = CGround::GetHeightReal(x0, z1) + kShadowLift;
+	// Sun elevation drives elongation. Clamp so very low suns don't
+	// produce kilometre-long streaks; 0.25 = ~14deg above horizon.
+	const float sunElev = std::max(0.25f, sunDir.y);
+	const float stretch = std::min(2.4f, 1.0f / sunElev);
+	const float halfL = radius * stretch;
+	const float halfW = radius;
 
-	verts.push_back(ShadowVertex{x0, y00, z0, -1.0f, -1.0f});
-	verts.push_back(ShadowVertex{x1, y10, z0,  1.0f, -1.0f});
-	verts.push_back(ShadowVertex{x1, y11, z1,  1.0f,  1.0f});
-	verts.push_back(ShadowVertex{x0, y01, z1, -1.0f,  1.0f});
+	// Shadow centre: shifted toward the foot of the projection ray
+	// (radius * 0.5 along) so the unit body sits on the *near* end of
+	// the shadow rather than the middle.
+	const float cx = centre.x + dirX * (halfL - radius * 0.5f);
+	const float cz = centre.z + dirZ * (halfL - radius * 0.5f);
+
+	const float p0x = cx - dirX * halfL - perp.x * halfW;
+	const float p0z = cz - dirZ * halfL - perp.z * halfW;
+	const float p1x = cx + dirX * halfL - perp.x * halfW;
+	const float p1z = cz + dirZ * halfL - perp.z * halfW;
+	const float p2x = cx + dirX * halfL + perp.x * halfW;
+	const float p2z = cz + dirZ * halfL + perp.z * halfW;
+	const float p3x = cx - dirX * halfL + perp.x * halfW;
+	const float p3z = cz - dirZ * halfL + perp.z * halfW;
+
+	const float y0 = CGround::GetHeightReal(p0x, p0z) + kShadowLift;
+	const float y1 = CGround::GetHeightReal(p1x, p1z) + kShadowLift;
+	const float y2 = CGround::GetHeightReal(p2x, p2z) + kShadowLift;
+	const float y3 = CGround::GetHeightReal(p3x, p3z) + kShadowLift;
+
+	verts.push_back(ShadowVertex{p0x, y0, p0z, -1.0f, -1.0f});
+	verts.push_back(ShadowVertex{p1x, y1, p1z,  1.0f, -1.0f});
+	verts.push_back(ShadowVertex{p2x, y2, p2z,  1.0f,  1.0f});
+	verts.push_back(ShadowVertex{p3x, y3, p3z, -1.0f,  1.0f});
 
 	inds.push_back(base + 0);
 	inds.push_back(base + 1);
@@ -189,6 +228,15 @@ void MetalUnitShadows::Draw()
 	std::vector<ShadowVertex> verts;
 	std::vector<uint32_t>     inds;
 
+	// Sun direction for projective stretch. Default mid-morning angle
+	// keeps shadows visible even when ISky hasn't initialised.
+	float3 sunDir(0.3f, 0.85f, 0.4f);
+	const auto& skyPtr = ISky::GetSky();
+	if (skyPtr != nullptr && skyPtr->GetLight() != nullptr) {
+		const float4 sd = skyPtr->GetLight()->GetLightDir();
+		sunDir.x = sd.x; sunDir.y = sd.y; sunDir.z = sd.z;
+	}
+
 	const auto& units = unitHandler.GetActiveUnits();
 	verts.reserve(units.size() * 4);
 	inds.reserve(units.size() * 6);
@@ -196,14 +244,14 @@ void MetalUnitShadows::Draw()
 	for (const CUnit* u : units) {
 		if (u == nullptr || u->noDraw || u->IsInWater())
 			continue;
-		EmitShadowQuad(verts, inds, u->pos, ComputeShadowRadius(u));
+		EmitShadowQuad(verts, inds, u->pos, ComputeShadowRadius(u), sunDir);
 	}
 
 	for (int id : featureHandler.GetActiveFeatureIDs()) {
 		const CFeature* f = featureHandler.GetFeature(id);
 		if (f == nullptr || f->noDraw)
 			continue;
-		EmitShadowQuad(verts, inds, f->pos, ComputeShadowRadius(f));
+		EmitShadowQuad(verts, inds, f->pos, ComputeShadowRadius(f), sunDir);
 	}
 
 	if (verts.empty())

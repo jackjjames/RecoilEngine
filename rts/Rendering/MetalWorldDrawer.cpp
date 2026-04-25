@@ -62,6 +62,8 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     vec4 uMinHeight_MaxHeight_HaveDiffuse_HaveNormals;
     vec4 uSunDirXYZ_SquareSize;
     vec4 uCornerSizeXY_InvCornerSizeXY;
+    vec4 uCamPos;          // xyz, w = fog density (1 / fogFar)
+    vec4 uHorizonColor;    // sky horizon to blend distant terrain into
 } ubo;
 
 layout(set = 0, binding = 1) uniform sampler2D uHeight;
@@ -87,6 +89,8 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     vec4 uMinHeight_MaxHeight_HaveDiffuse_HaveNormals;
     vec4 uSunDirXYZ_SquareSize;
     vec4 uCornerSizeXY_InvCornerSizeXY;
+    vec4 uCamPos;
+    vec4 uHorizonColor;
 } ubo;
 
 layout(set = 0, binding = 1) uniform sampler2D uHeight;
@@ -156,6 +160,20 @@ void main() {
     vec3 ambColor = vec3(0.35, 0.38, 0.45);
     vec3 col = albedo * (sunColor * diffuse + ambColor);
 
+    // Distance-fade into the horizon colour. The fog factor is an
+    // exponential of the squared world-space distance: hides the
+    // mesh-edge clip line at the back of the map, ties the terrain
+    // visually to MetalSkyPass's atmospheric horizon stop, and
+    // matches the look BAR's GL fog stanza produces with the
+    // mapInfo->atmosphere fogStart/fogEnd defaults. fogDensity is
+    // pre-baked into uCamPos.w on the CPU so the per-fragment math
+    // stays a single mul + exp.
+    float fogDensity = ubo.uCamPos.w;
+    float dist = length(vWorldPos - ubo.uCamPos.xyz);
+    float fog  = 1.0 - exp(-dist * dist * (fogDensity * fogDensity) * 1.4);
+    fog = clamp(fog, 0.0, 0.85); // never let the foreground fully wash out
+    col = mix(col, ubo.uHorizonColor.rgb, fog);
+
     fragColor = vec4(col, 1.0);
 }
 )";
@@ -166,6 +184,8 @@ struct alignas(16) CameraUBOLayout {
 	float params[4];            // minHeight, maxHeight, haveDiffuse(0/1), haveNormals(0/1)
 	float sunDirAndSquare[4];   // sun.xyz, SQUARE_SIZE
 	float cornerSize[4];        // cornersX, cornersZ, 1/cornersX, 1/cornersZ
+	float camPos[4];            // xyz, w = fog density (1 / fogFar)
+	float horizonColor[4];      // ties terrain fade to MetalSkyPass horizon
 };
 
 
@@ -467,6 +487,8 @@ void MetalWorldDrawer::Draw() const
 	const CCamera* cam = CCameraHandler::GetActiveCamera();
 	if (cam != nullptr) {
 		std::memcpy(ubo.viewProj, cam->GetViewProjectionMatrix().m, sizeof(ubo.viewProj));
+		const float3& p = cam->GetPos();
+		ubo.camPos[0] = p.x; ubo.camPos[1] = p.y; ubo.camPos[2] = p.z;
 	} else {
 		ubo.viewProj[0]  = 1.0f;
 		ubo.viewProj[5]  = 1.0f;
@@ -482,9 +504,15 @@ void MetalWorldDrawer::Draw() const
 	// init from mapInfo->light.sunDir). Fall back to a reasonable
 	// overhead-ish direction if the sky hasn't initialised yet.
 	float4 sunDir = float4(0.3f, 0.85f, 0.4f, 1.0f);
+	float3 mapSkyCol = float3(0.62f, 0.72f, 0.80f);
+	float3 mapSunCol = float3(1.00f, 0.92f, 0.78f);
 	const auto& skyPtr = ISky::GetSky();
-	if (skyPtr != nullptr && skyPtr->GetLight() != nullptr)
-		sunDir = skyPtr->GetLight()->GetLightDir();
+	if (skyPtr != nullptr) {
+		if (skyPtr->GetLight() != nullptr)
+			sunDir = skyPtr->GetLight()->GetLightDir();
+		mapSkyCol = skyPtr->skyColor;
+		mapSunCol = skyPtr->sunColor;
+	}
 	ubo.sunDirAndSquare[0] = sunDir.x;
 	ubo.sunDirAndSquare[1] = sunDir.y;
 	ubo.sunDirAndSquare[2] = sunDir.z;
@@ -494,6 +522,23 @@ void MetalWorldDrawer::Draw() const
 	ubo.cornerSize[1] = static_cast<float>(cachedCornersZ);
 	ubo.cornerSize[2] = (cachedCornersX > 0) ? 1.0f / static_cast<float>(cachedCornersX) : 0.0f;
 	ubo.cornerSize[3] = (cachedCornersZ > 0) ? 1.0f / static_cast<float>(cachedCornersZ) : 0.0f;
+
+	// Fog density: derive from the larger map axis so the falloff
+	// reaches saturation roughly where the terrain mesh ends. Matches
+	// BAR's GL atmosphere fogEnd defaults closely enough for a coarse
+	// pass; a future slice can route mapInfo->atmosphere{} fogStart /
+	// fogEnd through here once we audit it isn't common-code-coupled.
+	const float mapDiag = std::sqrt(
+		static_cast<float>(mapDims.mapx * mapDims.mapx + mapDims.mapy * mapDims.mapy)
+	) * static_cast<float>(SQUARE_SIZE);
+	const float fogFar  = std::max(mapDiag * 0.7f, 1024.0f);
+	ubo.camPos[3] = 1.0f / fogFar;
+
+	const float3 horizon = mapSkyCol * 0.35f + mapSunCol * 0.55f + float3(0.05f, 0.05f, 0.04f);
+	ubo.horizonColor[0] = horizon.x;
+	ubo.horizonColor[1] = horizon.y;
+	ubo.horizonColor[2] = horizon.z;
+	ubo.horizonColor[3] = 1.0f;
 
 	uniformBuffer->UpdateData(&ubo, sizeof(ubo), 0);
 

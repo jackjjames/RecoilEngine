@@ -55,6 +55,7 @@
 #include "Rendering/MetalResourceHUD.h"
 #include "Rendering/MetalSelectionMarkers.h"
 #include "Rendering/MetalWorldCursor.h"
+#include "Rendering/MetalDeathFX.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalProjectiles.h"
@@ -1498,6 +1499,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalCommandLines> metalCommandLines;
 	static std::unique_ptr<MetalResourceHUD>  metalResourceHUD;
 	static std::unique_ptr<MetalWorldCursor>  metalWorldCursor;
+	static std::unique_ptr<MetalDeathFX>      metalDeathFX;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1522,6 +1524,8 @@ bool CGame::Draw() {
 		metalResourceHUD = std::make_unique<MetalResourceHUD>();
 	if (metalWorldCursor == nullptr)
 		metalWorldCursor = std::make_unique<MetalWorldCursor>();
+	if (metalDeathFX == nullptr)
+		metalDeathFX = std::make_unique<MetalDeathFX>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1603,6 +1607,13 @@ bool CGame::Draw() {
 	// since these are world-space and want to sit under HUD.
 	if (metalCommandLines && metalCommandLines->IsValid())
 		metalCommandLines->Draw();
+
+	// Brief expanding billboard puffs whenever a unit disappears
+	// from the active set this frame (kill / scuttle / Lua remove).
+	// Drawn before the cursor so the cursor's gold ring sits over
+	// any explosions the player is currently aiming at.
+	if (metalDeathFX && metalDeathFX->IsValid())
+		metalDeathFX->Draw();
 
 	// Pulsing ground-plane mouse cursor. World-space so it correctly
 	// reads against terrain depth; skipped silently when the cursor

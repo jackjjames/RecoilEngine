@@ -57,6 +57,7 @@
 #include "Rendering/MetalWorldCursor.h"
 #include "Rendering/MetalDeathFX.h"
 #include "Rendering/MetalCraters.h"
+#include "Rendering/MetalBuildHalo.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalProjectiles.h"
@@ -1502,6 +1503,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalWorldCursor>  metalWorldCursor;
 	static std::unique_ptr<MetalDeathFX>      metalDeathFX;
 	static std::unique_ptr<MetalCraters>      metalCraters;
+	static std::unique_ptr<MetalBuildHalo>    metalBuildHalo;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1530,6 +1532,8 @@ bool CGame::Draw() {
 		metalDeathFX = std::make_unique<MetalDeathFX>();
 	if (metalCraters == nullptr)
 		metalCraters = std::make_unique<MetalCraters>();
+	if (metalBuildHalo == nullptr)
+		metalBuildHalo = std::make_unique<MetalBuildHalo>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1613,6 +1617,14 @@ bool CGame::Draw() {
 	// space and shouldn't be obscured by them.
 	if (metalSelectionMarkers && metalSelectionMarkers->IsValid())
 		metalSelectionMarkers->Draw();
+
+	// Pulsing build-progress halo around units currently under
+	// construction. Drawn after selection rings so the colour
+	// difference (gold pulse vs amber-to-green pulse) is easy to
+	// distinguish on units that happen to be both selected and
+	// under construction.
+	if (metalBuildHalo && metalBuildHalo->IsValid())
+		metalBuildHalo->Draw();
 
 	// Order-queue polylines for selected units (move / attack / fight
 	// / patrol / repair / build chains). After selection rings so the

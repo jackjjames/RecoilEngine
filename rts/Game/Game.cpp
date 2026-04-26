@@ -59,6 +59,7 @@
 #include "Rendering/MetalCraters.h"
 #include "Rendering/MetalBuildHalo.h"
 #include "Rendering/MetalNanoBeams.h"
+#include "Rendering/MetalRangeRings.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalProjectiles.h"
@@ -1506,6 +1507,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalCraters>      metalCraters;
 	static std::unique_ptr<MetalBuildHalo>    metalBuildHalo;
 	static std::unique_ptr<MetalNanoBeams>    metalNanoBeams;
+	static std::unique_ptr<MetalRangeRings>   metalRangeRings;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1538,6 +1540,8 @@ bool CGame::Draw() {
 		metalBuildHalo = std::make_unique<MetalBuildHalo>();
 	if (metalNanoBeams == nullptr)
 		metalNanoBeams = std::make_unique<MetalNanoBeams>();
+	if (metalRangeRings == nullptr)
+		metalRangeRings = std::make_unique<MetalRangeRings>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1636,6 +1640,12 @@ bool CGame::Draw() {
 	// growing.
 	if (metalNanoBeams && metalNanoBeams->IsValid())
 		metalNanoBeams->Draw();
+
+	// Weapon range rings around selected units. After nano beams so
+	// the firing radius reads cleanly even when a constructor and a
+	// turret are both selected.
+	if (metalRangeRings && metalRangeRings->IsValid())
+		metalRangeRings->Draw();
 
 	// Order-queue polylines for selected units (move / attack / fight
 	// / patrol / repair / build chains). After selection rings so the

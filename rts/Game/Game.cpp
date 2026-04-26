@@ -54,6 +54,7 @@
 #include "Rendering/MetalMinimap.h"
 #include "Rendering/MetalResourceHUD.h"
 #include "Rendering/MetalSelectionMarkers.h"
+#include "Rendering/MetalWorldCursor.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalProjectiles.h"
@@ -1496,6 +1497,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalSelectionMarkers> metalSelectionMarkers;
 	static std::unique_ptr<MetalCommandLines> metalCommandLines;
 	static std::unique_ptr<MetalResourceHUD>  metalResourceHUD;
+	static std::unique_ptr<MetalWorldCursor>  metalWorldCursor;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1518,6 +1520,8 @@ bool CGame::Draw() {
 		metalCommandLines = std::make_unique<MetalCommandLines>();
 	if (metalResourceHUD == nullptr)
 		metalResourceHUD = std::make_unique<MetalResourceHUD>();
+	if (metalWorldCursor == nullptr)
+		metalWorldCursor = std::make_unique<MetalWorldCursor>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1599,6 +1603,14 @@ bool CGame::Draw() {
 	// since these are world-space and want to sit under HUD.
 	if (metalCommandLines && metalCommandLines->IsValid())
 		metalCommandLines->Draw();
+
+	// Pulsing ground-plane mouse cursor. World-space so it correctly
+	// reads against terrain depth; skipped silently when the cursor
+	// ray misses the ground (over sky / off-map). Drawn after the
+	// command lines so it sits at the head of the player's planned
+	// queue when they're aiming at a target.
+	if (metalWorldCursor && metalWorldCursor->IsValid())
+		metalWorldCursor->Draw();
 
 	// Bottom-left minimap with team-coloured unit dots. Drawn last so
 	// it sits on top of the world geometry, before the debug HUD

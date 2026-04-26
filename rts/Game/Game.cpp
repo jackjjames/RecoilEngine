@@ -52,6 +52,7 @@
 #include "Rendering/MetalSkyPass.h"
 #include "Rendering/MetalCommandLines.h"
 #include "Rendering/MetalMinimap.h"
+#include "Rendering/MetalResourceHUD.h"
 #include "Rendering/MetalSelectionMarkers.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
@@ -1494,6 +1495,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalMinimap>      metalMinimap;
 	static std::unique_ptr<MetalSelectionMarkers> metalSelectionMarkers;
 	static std::unique_ptr<MetalCommandLines> metalCommandLines;
+	static std::unique_ptr<MetalResourceHUD>  metalResourceHUD;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1514,6 +1516,8 @@ bool CGame::Draw() {
 		metalSelectionMarkers = std::make_unique<MetalSelectionMarkers>();
 	if (metalCommandLines == nullptr)
 		metalCommandLines = std::make_unique<MetalCommandLines>();
+	if (metalResourceHUD == nullptr)
+		metalResourceHUD = std::make_unique<MetalResourceHUD>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1601,6 +1605,13 @@ bool CGame::Draw() {
 	// text. Skipped on non-SMF maps (no minimap mip in the .smf).
 	if (metalMinimap && metalMinimap->IsValid())
 		metalMinimap->Draw();
+
+	// Top-of-screen metal / energy bars for the local team. Drawn
+	// after the minimap so its background backing rect sits above
+	// the world but the labels share the same MetalTextOverlay
+	// pipeline already in use for the debug HUD line below.
+	if (metalResourceHUD && metalResourceHUD->IsValid())
+		metalResourceHUD->Draw(&textOverlay);
 
 	char buf[128];
 	SNPRINTF(buf, sizeof(buf),

@@ -58,6 +58,7 @@
 #include "Rendering/MetalDeathFX.h"
 #include "Rendering/MetalCraters.h"
 #include "Rendering/MetalBuildHalo.h"
+#include "Rendering/MetalNanoBeams.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalProjectiles.h"
@@ -1504,6 +1505,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalDeathFX>      metalDeathFX;
 	static std::unique_ptr<MetalCraters>      metalCraters;
 	static std::unique_ptr<MetalBuildHalo>    metalBuildHalo;
+	static std::unique_ptr<MetalNanoBeams>    metalNanoBeams;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1534,6 +1536,8 @@ bool CGame::Draw() {
 		metalCraters = std::make_unique<MetalCraters>();
 	if (metalBuildHalo == nullptr)
 		metalBuildHalo = std::make_unique<MetalBuildHalo>();
+	if (metalNanoBeams == nullptr)
+		metalNanoBeams = std::make_unique<MetalNanoBeams>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1625,6 +1629,13 @@ bool CGame::Draw() {
 	// under construction.
 	if (metalBuildHalo && metalBuildHalo->IsValid())
 		metalBuildHalo->Draw();
+
+	// Nanolathe beams from each constructor to its current build /
+	// repair / reclaim / resurrect target. After build halos so the
+	// scrolling dashed beam visually points at the halo it's
+	// growing.
+	if (metalNanoBeams && metalNanoBeams->IsValid())
+		metalNanoBeams->Draw();
 
 	// Order-queue polylines for selected units (move / attack / fight
 	// / patrol / repair / build chains). After selection rings so the

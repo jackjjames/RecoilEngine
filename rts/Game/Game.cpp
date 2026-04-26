@@ -56,6 +56,7 @@
 #include "Rendering/MetalSelectionMarkers.h"
 #include "Rendering/MetalWorldCursor.h"
 #include "Rendering/MetalDeathFX.h"
+#include "Rendering/MetalCraters.h"
 #include "Rendering/MetalSplashRenderer.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalProjectiles.h"
@@ -1500,6 +1501,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalResourceHUD>  metalResourceHUD;
 	static std::unique_ptr<MetalWorldCursor>  metalWorldCursor;
 	static std::unique_ptr<MetalDeathFX>      metalDeathFX;
+	static std::unique_ptr<MetalCraters>      metalCraters;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
 	if (metalWorldDrawer == nullptr)
@@ -1526,6 +1528,8 @@ bool CGame::Draw() {
 		metalWorldCursor = std::make_unique<MetalWorldCursor>();
 	if (metalDeathFX == nullptr)
 		metalDeathFX = std::make_unique<MetalDeathFX>();
+	if (metalCraters == nullptr)
+		metalCraters = std::make_unique<MetalCraters>();
 
 	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
 	globalRendering->lastFrameStart = spring_gettime();
@@ -1572,6 +1576,15 @@ bool CGame::Draw() {
 	// attachment slice; until then this is the analytic stand-in.
 	if (metalWaterPlane && metalWaterPlane->IsValid())
 		metalWaterPlane->Draw();
+
+	// Persistent ground scorch decals at every unit-death site.
+	// Drawn after the terrain pass so the alpha-blend can darken the
+	// ground texture, but before the unit-shadow decals so a unit
+	// standing on top of a previous death site still gets its
+	// circular shadow painted over the scorch (shadows read more
+	// strongly than craters by design).
+	if (metalCraters && metalCraters->IsValid())
+		metalCraters->Draw();
 
 	// Shadow decals before the unit pass: terrain has just written
 	// colour, the decal multiplies that colour down, then the unit

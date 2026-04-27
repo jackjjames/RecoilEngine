@@ -3532,6 +3532,30 @@ int LuaUnsyncedRead::GetGameState(lua_State* L)
  * @section commands
 ******************************************************************************/
 
+static std::vector<SCommandDescription> GetFallbackActiveCommandDescriptions()
+{
+	auto ac = selectedUnitsHandler.GetAvailableCommands();
+	return std::move(ac.commands);
+}
+
+static void PushCommandDescriptions(lua_State* L, const std::vector<SCommandDescription>& cmdDescs)
+{
+	const int cmdDescCount = (int)cmdDescs.size();
+
+	lua_checkstack(L, 1 + 2);
+	// When CMD_INDEX_OFFSET is not 1, lua will resort to using the hash
+	// part to index table keys as we're no longer adding keys to the table
+	// following the sequence 1 to N for any N.
+	lua_createtable(L,
+			CMD_INDEX_OFFSET == 1 ? cmdDescCount : 0,
+			CMD_INDEX_OFFSET == 1 ? 0 : cmdDescCount);
+
+	for (int i = 0; i < cmdDescCount; i++) {
+		LuaUtils::PushCommandDesc(L, cmdDescs[i]);
+		lua_rawseti(L, -2, i + CMD_INDEX_OFFSET);
+	}
+}
+
 
 /***
  *
@@ -3598,24 +3622,13 @@ int LuaUnsyncedRead::GetDefaultCommand(lua_State* L)
  */
 int LuaUnsyncedRead::GetActiveCmdDescs(lua_State* L)
 {
-	if (guihandler == nullptr)
-		return 0;
+	if (guihandler == nullptr) {
+		PushCommandDescriptions(L, GetFallbackActiveCommandDescriptions());
+		return 1;
+	}
 
 	const vector<SCommandDescription>& cmdDescs = guihandler->commands;
-	const int cmdDescCount = (int)cmdDescs.size();
-
-	lua_checkstack(L, 1 + 2);
-	// When CMD_INDEX_OFFSET is not 1, lua will resort to using the hash
-	// part to index table keys as we're no longer adding keys to the table
-	// following the sequence 1 to N for any N.
-	lua_createtable(L,
-			CMD_INDEX_OFFSET == 1 ? cmdDescCount : 0,
-			CMD_INDEX_OFFSET == 1 ? 0 : cmdDescCount);
-
-	for (int i = 0; i < cmdDescCount; i++) {
-		LuaUtils::PushCommandDesc(L, cmdDescs[i]);
-		lua_rawseti(L, -2, i + CMD_INDEX_OFFSET);
-	}
+	PushCommandDescriptions(L, cmdDescs);
 	return 1;
 }
 
@@ -3628,10 +3641,16 @@ int LuaUnsyncedRead::GetActiveCmdDescs(lua_State* L)
  */
 int LuaUnsyncedRead::GetActiveCmdDesc(lua_State* L)
 {
-	if (guihandler == nullptr)
-		return 0;
-
 	const int cmdIndex = luaL_checkint(L, 1) - CMD_INDEX_OFFSET;
+	if (guihandler == nullptr) {
+		const auto cmdDescs = GetFallbackActiveCommandDescriptions();
+		const int cmdDescCount = (int)cmdDescs.size();
+		if ((cmdIndex < 0) || (cmdIndex >= cmdDescCount))
+			return 0;
+
+		LuaUtils::PushCommandDesc(L, cmdDescs[cmdIndex]);
+		return 1;
+	}
 
 	const vector<SCommandDescription>& cmdDescs = guihandler->commands;
 	const int cmdDescCount = (int)cmdDescs.size();
@@ -3652,10 +3671,18 @@ int LuaUnsyncedRead::GetActiveCmdDesc(lua_State* L)
  */
 int LuaUnsyncedRead::GetCmdDescIndex(lua_State* L)
 {
-	if (guihandler == nullptr)
-		return 0;
-
 	const int cmdId = luaL_checkint(L, 1);
+	if (guihandler == nullptr) {
+		const auto cmdDescs = GetFallbackActiveCommandDescriptions();
+		const int cmdDescCount = (int)cmdDescs.size();
+		for (int i = 0; i < cmdDescCount; i++) {
+			if (cmdId == cmdDescs[i].id) {
+				lua_pushnumber(L, i + CMD_INDEX_OFFSET);
+				return 1;
+			}
+		}
+		return 0;
+	}
 
 	const vector<SCommandDescription>& cmdDescs = guihandler->commands;
 	const int cmdDescCount = (int)cmdDescs.size();

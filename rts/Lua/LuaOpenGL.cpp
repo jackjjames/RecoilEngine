@@ -593,6 +593,8 @@ static int MetalLuaGL_Color(lua_State* L)
 struct MetalLuaImmediateVertex {
 	float x = 0.0f;
 	float y = 0.0f;
+	float u = 0.0f;
+	float v = 0.0f;
 	float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
@@ -606,6 +608,12 @@ static float* MetalLuaImmediateColor()
 {
 	static float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 	return color;
+}
+
+static float* MetalLuaImmediateTexCoord()
+{
+	static float texCoord[2] = {0.0f, 0.0f};
+	return texCoord;
 }
 
 static bool& MetalLuaImmediateCapturing()
@@ -639,6 +647,10 @@ static void MetalLuaGL_DrawCapturedRect(const std::vector<MetalLuaImmediateVerte
 	float y1 = vertices[first].y;
 	float x2 = vertices[first].x;
 	float y2 = vertices[first].y;
+	float u1 = vertices[first].u;
+	float v1 = vertices[first].v;
+	float u2 = vertices[first].u;
+	float v2 = vertices[first].v;
 	float color[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
 	for (size_t i = first; i < end; ++i) {
@@ -646,6 +658,10 @@ static void MetalLuaGL_DrawCapturedRect(const std::vector<MetalLuaImmediateVerte
 		y1 = std::min(y1, vertices[i].y);
 		x2 = std::max(x2, vertices[i].x);
 		y2 = std::max(y2, vertices[i].y);
+		u1 = std::min(u1, vertices[i].u);
+		v1 = std::min(v1, vertices[i].v);
+		u2 = std::max(u2, vertices[i].u);
+		v2 = std::max(v2, vertices[i].v);
 		color[0] += vertices[i].color[0];
 		color[1] += vertices[i].color[1];
 		color[2] += vertices[i].color[2];
@@ -653,8 +669,18 @@ static void MetalLuaGL_DrawCapturedRect(const std::vector<MetalLuaImmediateVerte
 	}
 
 	const float invCount = 1.0f / float(end - first);
+	if ((end - first) == 4) {
+		u1 = vertices[first + 0].u;
+		v1 = vertices[first + 0].v;
+		u2 = vertices[first + 2].u;
+		v2 = vertices[first + 2].v;
+	}
 	MetalLuaUI::SetColor(color[0] * invCount, color[1] * invCount, color[2] * invCount, color[3]);
-	MetalLuaUI::DrawRect(x1, y1, x2, y2);
+	if (MetalLuaUI::HasBoundTexture()) {
+		MetalLuaUI::DrawBoundTextureRectUV(x1, y1, x2, y2, u1, v1, u2, v2);
+	} else {
+		MetalLuaUI::DrawRect(x1, y1, x2, y2);
+	}
 }
 
 static int MetalLuaGL_Vertex(lua_State* L)
@@ -676,12 +702,24 @@ static int MetalLuaGL_Vertex(lua_State* L)
 	}
 
 	auto* color = MetalLuaImmediateColor();
-	MetalLuaImmediateVertices().push_back({x, y, {color[0], color[1], color[2], color[3]}});
+	auto* texCoord = MetalLuaImmediateTexCoord();
+	MetalLuaImmediateVertices().push_back({x, y, texCoord[0], texCoord[1], {color[0], color[1], color[2], color[3]}});
 	return 0;
 }
 
-static int MetalLuaGL_TexCoord(lua_State*)
+static int MetalLuaGL_TexCoord(lua_State* L)
 {
+	auto* texCoord = MetalLuaImmediateTexCoord();
+	if (lua_gettop(L) == 1 && lua_istable(L, 1)) {
+		lua_rawgeti(L, 1, 1);
+		texCoord[0] = luaL_checkfloat(L, -1);
+		lua_rawgeti(L, 1, 2);
+		texCoord[1] = luaL_checkfloat(L, -1);
+		lua_pop(L, 2);
+	} else {
+		texCoord[0] = luaL_optnumber(L, 1, 0.0f);
+		texCoord[1] = luaL_optnumber(L, 2, 0.0f);
+	}
 	return 0;
 }
 
@@ -733,6 +771,22 @@ static bool MetalLuaGL_ReadVertexTable(lua_State* L, int tableIdx, MetalLuaImmed
 	}
 	lua_pop(L, 1);
 
+	lua_getfield(L, tableIdx, "t");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		lua_getfield(L, tableIdx, "texcoord");
+	}
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		lua_getfield(L, tableIdx, "texCoord");
+	}
+	if (lua_istable(L, -1)) {
+		float texCoord[2] = {0.0f, 0.0f};
+		if (LuaUtils::ParseFloatArray(L, -1, texCoord, 2) >= 2)
+			std::copy(texCoord, texCoord + 2, MetalLuaImmediateTexCoord());
+	}
+	lua_pop(L, 1);
+
 	lua_getfield(L, tableIdx, "v");
 	if (!lua_istable(L, -1)) {
 		lua_pop(L, 1);
@@ -751,7 +805,8 @@ static bool MetalLuaGL_ReadVertexTable(lua_State* L, int tableIdx, MetalLuaImmed
 	lua_pop(L, 1);
 
 	auto* color = MetalLuaImmediateColor();
-	vertex = {pos[0], pos[1], {color[0], color[1], color[2], color[3]}};
+	auto* texCoord = MetalLuaImmediateTexCoord();
+	vertex = {pos[0], pos[1], texCoord[0], texCoord[1], {color[0], color[1], color[2], color[3]}};
 	return true;
 }
 

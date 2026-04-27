@@ -20,6 +20,7 @@ namespace MetalLuaUI
 	void BindTexture(int textureID);
 	void BindNamedTexture(const std::string& name);
 	void UnbindTexture();
+	bool HasBoundTexture();
 	void RenderToTexture(int textureID, const std::function<void()>& drawFunc);
 	bool GetCaptureTextureSize(int& width, int& height);
 	int CreateList(const std::function<void()>& drawFunc);
@@ -37,6 +38,7 @@ namespace MetalLuaUI
 	void DrawText(const LuaUITextDraw& text);
 	void DrawRect(float x1, float y1, float x2, float y2);
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2);
+	void DrawBoundTextureRectUV(float x1, float y1, float x2, float y2, float u1, float v1, float u2, float v2);
 }
 
 #endif // RENDER_BACKEND_METAL

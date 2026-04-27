@@ -306,6 +306,7 @@ public:
 		boundTexture = textureID;
 	}
 	void UnbindTexture() { boundTexture = 0; }
+	bool HasBoundTexture() const { return textures.find(boundTexture) != textures.end(); }
 
 	void RenderToTexture(int textureID, const std::function<void()>& drawFunc)
 	{
@@ -469,17 +470,22 @@ public:
 
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2)
 	{
+		DrawBoundTextureRectUV(x1, y1, x2, y2, 0.0f, 1.0f, 1.0f, 0.0f);
+	}
+
+	void DrawBoundTextureRectUV(float x1, float y1, float x2, float y2, float u1, float v1, float u2, float v2)
+	{
 		const auto it = textures.find(boundTexture);
 		if (it == textures.end())
 			return;
 
 		const auto& texture = it->second;
 		if (capturingTexture != 0) {
-			CaptureTextureRect(texture, x1, y1, x2, y2);
+			CaptureTextureRect(texture, x1, y1, x2, y2, u1, v1, u2, v2);
 			return;
 		}
 
-		DrawTextureScreen(texture, x1, y1, x2, y2);
+		DrawTextureScreen(texture, x1, y1, x2, y2, u1, v1, u2, v2);
 
 		for (const CapturedText& text: texture.texts) {
 			LuaUITextDraw draw = text.draw;
@@ -546,7 +552,8 @@ private:
 		RasterizeRect(it->second, rect, localX1, localY1, localX2, localY2);
 	}
 
-	void CaptureTextureRect(const TextureCommandBuffer& source, float x1, float y1, float x2, float y2)
+	void CaptureTextureRect(const TextureCommandBuffer& source, float x1, float y1, float x2, float y2,
+	                        float u1, float v1, float u2, float v2)
 	{
 		if (source.pixels.empty())
 			return;
@@ -561,7 +568,7 @@ private:
 		const auto [localX1, localY1] = ClipToTextureLocal(clipX1, clipY1, it->second.desc);
 		const auto [localX2, localY2] = ClipToTextureLocal(clipX2, clipY2, it->second.desc);
 
-		RasterizeTextureRect(it->second, source, localX1, localY1, localX2, localY2);
+		RasterizeTextureRect(it->second, source, localX1, localY1, localX2, localY2, u1, v1, u2, v2);
 	}
 
 	static uint32_t PackColor(const float* color)
@@ -628,7 +635,8 @@ private:
 	}
 
 	void RasterizeTextureRect(TextureCommandBuffer& target, const TextureCommandBuffer& source,
-	                          float localX1, float localY1, float localX2, float localY2)
+	                          float localX1, float localY1, float localX2, float localY2,
+	                          float u1, float v1, float u2, float v2)
 	{
 		if (target.pixels.empty() || source.pixels.empty())
 			return;
@@ -648,11 +656,11 @@ private:
 		const float invHeight = (localY2 != localY1) ? 1.0f / (localY2 - localY1) : 0.0f;
 		for (int y = y0; y < y1; ++y) {
 			uint32_t* dstRow = target.pixels.data() + y * target.desc.width;
-			const float v = std::clamp(((float(y) + 0.5f) - localY1) * invHeight, 0.0f, 1.0f);
+			const float v = v1 + (v2 - v1) * std::clamp(((float(y) + 0.5f) - localY1) * invHeight, 0.0f, 1.0f);
 			const int srcY = std::clamp(int(v * float(source.desc.height - 1) + 0.5f), 0, source.desc.height - 1);
 			const uint32_t* srcRow = source.pixels.data() + srcY * source.desc.width;
 			for (int x = x0; x < x1; ++x) {
-				const float u = std::clamp(((float(x) + 0.5f) - localX1) * invWidth, 0.0f, 1.0f);
+				const float u = u1 + (u2 - u1) * std::clamp(((float(x) + 0.5f) - localX1) * invWidth, 0.0f, 1.0f);
 				const int srcX = std::clamp(int(u * float(source.desc.width - 1) + 0.5f), 0, source.desc.width - 1);
 				const uint32_t src = TintPixel(srcRow[srcX], color, blendEnabled);
 				dstRow[x] = BlendOver(dstRow[x], src);
@@ -732,7 +740,8 @@ private:
 		rectPipeline->Disable();
 	}
 
-	void DrawTextureScreen(const TextureCommandBuffer& texture, float x1, float y1, float x2, float y2)
+	void DrawTextureScreen(const TextureCommandBuffer& texture, float x1, float y1, float x2, float y2,
+	                       float u1, float v1, float u2, float v2)
 	{
 		if (!valid || globalRendering == nullptr || texture.texture == nullptr || !texture.texture->IsValid())
 			return;
@@ -753,12 +762,12 @@ private:
 		const float alpha = blendEnabled ? color[3] : 1.0f;
 		const float tint[4] = {color[0], color[1], color[2], alpha};
 		TextureVertex verts[6] = {
-			{{nx0, ny0}, {0.0f, 1.0f}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx1, ny0}, {1.0f, 1.0f}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx0, ny1}, {0.0f, 0.0f}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx0, ny1}, {0.0f, 0.0f}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx1, ny0}, {1.0f, 1.0f}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx1, ny1}, {1.0f, 0.0f}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx0, ny0}, {u1, v1}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx1, ny0}, {u2, v1}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx0, ny1}, {u1, v2}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx0, ny1}, {u1, v2}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx1, ny0}, {u2, v1}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx1, ny1}, {u2, v2}, {tint[0], tint[1], tint[2], tint[3]}},
 		};
 
 		textureVertexBuffer->UpdateData(verts, sizeof(verts), 0);
@@ -838,6 +847,7 @@ namespace MetalLuaUI
 	void BindTexture(int textureID) { GetRenderer().BindTexture(textureID); }
 	void BindNamedTexture(const std::string& name) { GetRenderer().BindNamedTexture(name); }
 	void UnbindTexture() { GetRenderer().UnbindTexture(); }
+	bool HasBoundTexture() { return GetRenderer().HasBoundTexture(); }
 	void RenderToTexture(int textureID, const std::function<void()>& drawFunc) { GetRenderer().RenderToTexture(textureID, drawFunc); }
 	bool GetCaptureTextureSize(int& width, int& height) { return GetRenderer().GetCaptureTextureSize(width, height); }
 	int CreateList(const std::function<void()>& drawFunc) { return GetRenderer().CreateList(drawFunc); }
@@ -853,6 +863,7 @@ namespace MetalLuaUI
 	void DrawText(const LuaUITextDraw& text) { GetRenderer().DrawText(text); }
 	void DrawRect(float x1, float y1, float x2, float y2) { GetRenderer().DrawRect(x1, y1, x2, y2); }
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2) { GetRenderer().DrawBoundTextureRect(x1, y1, x2, y2); }
+	void DrawBoundTextureRectUV(float x1, float y1, float x2, float y2, float u1, float v1, float u2, float v2) { GetRenderer().DrawBoundTextureRectUV(x1, y1, x2, y2, u1, v1, u2, v2); }
 }
 
 #endif // RENDER_BACKEND_METAL

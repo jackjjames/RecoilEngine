@@ -664,12 +664,11 @@ static bool& MetalLuaImmediateCapturing()
 
 static bool MetalLuaGL_ShouldCaptureImmediate()
 {
+	// Capture immediate-mode geometry whenever a LuaUI R2T target is bound.
+	// The previous size window dropped the BAR top bar (full screen width, ~50 px tall) silently.
 	int width = 0;
 	int height = 0;
-	if (!MetalLuaUI::GetCaptureTextureSize(width, height))
-		return false;
-
-	return (width <= 900 && height >= 100 && height <= 500);
+	return MetalLuaUI::GetCaptureTextureSize(width, height);
 }
 
 static void MetalLuaGL_SetImmediateColor(const float* color)
@@ -787,15 +786,17 @@ static int MetalLuaGL_BeginEnd(lua_State* L)
 	const int args = lua_gettop(L);
 	if ((args < 2) || !lua_isfunction(L, 2))
 		luaL_error(L, "Incorrect arguments to gl.BeginEnd(type, func, ...)");
-	if (!MetalLuaGL_ShouldCaptureImmediate())
-		return 0;
 
 	const int primMode = luaL_checkint(L, 1);
 	auto& vertices = MetalLuaImmediateVertices();
 	vertices.clear();
 
+	// Always run the user's function so Lua-side state (gl.Color, gl.Texture, etc.) is observed,
+	// but only collect vertices when there is a capture target and a supported primitive.
+	const bool capture = MetalLuaGL_ShouldCaptureImmediate()
+		&& (primMode == GL_QUADS || primMode == GL_TRIANGLES || primMode == GL_TRIANGLE_FAN);
 	const bool previousCapturing = MetalLuaImmediateCapturing();
-	MetalLuaImmediateCapturing() = (primMode == GL_QUADS || primMode == GL_TRIANGLES || primMode == GL_TRIANGLE_FAN);
+	MetalLuaImmediateCapturing() = capture;
 	lua_pushvalue(L, 2);
 	for (int arg = 3; arg <= args; ++arg)
 		lua_pushvalue(L, arg);
@@ -803,6 +804,9 @@ static int MetalLuaGL_BeginEnd(lua_State* L)
 	MetalLuaImmediateCapturing() = previousCapturing;
 	if (error != 0)
 		lua_error(L);
+
+	if (!capture)
+		return 0;
 
 	if (primMode == GL_QUADS) {
 		for (size_t i = 0; i + 3 < vertices.size(); i += 4)

@@ -14,9 +14,9 @@ class ITexture;
 struct S3DModel;
 
 // 3D unit + feature drawer. For every active unit / feature whose model
-// has geometry attached, walks the LocalModel piece tree and draws each
-// piece at its current animated transform (unit world transform * piece
-// model-space transform). S3O tex1/tex2 sampling follows GL's
+// has geometry attached, draws each geometry-bearing piece with the
+// shared object/piece transform data and SVertexData bone weights used
+// by the GL4 model path. S3O tex1/tex2 sampling follows GL's
 // springcontent ModelFragProg.glsl convention: tex1 alpha drives
 // team-colour replacement, tex2 R is self-illumination, tex2 G drives
 // specular/reflectivity, and tex2 A contributes opacity.
@@ -26,10 +26,10 @@ struct S3DModel;
 //   - real cubemap/environment reflections.
 //   - LOD + frustum culling; every active object is submitted every frame.
 //   - shadow pass (S9-C5a).
-//   - GPU-side transform SSBO: matrices are pushed through the per-draw
-//     UBO. Per-piece draw call counts top out around 3-4k for medium
-//     skirmishes which is comfortable on Metal; the SSBO path lands when
-//     instancing becomes the bottleneck.
+//   - GPU-side transform SSBO: transform palettes are pushed through
+//     the per-object UBO. Per-piece draw call counts top out around
+//     3-4k for medium skirmishes which is comfortable on Metal; the
+//     SSBO path lands when instancing becomes the bottleneck.
 class MetalUnitMesh
 {
 public:

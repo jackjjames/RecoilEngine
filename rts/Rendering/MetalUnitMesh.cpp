@@ -12,9 +12,11 @@
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/IBuffer.h"
 #include "Rendering/IRenderBackend.h"
+#include "Rendering/MetalModelData.h"
 #include "Rendering/Models/3DModel.hpp"
 #include "Rendering/Models/3DModelPiece.hpp"
 #include "Rendering/Models/LocalModel.hpp"
+#include "Rendering/Models/ModelsMemStorage.h"
 #include "Rendering/Models/VertexData.hpp"
 #include "Rendering/Shaders/IShaderPipeline.h"
 #include "Rendering/Textures/ITexture.h"
@@ -30,6 +32,7 @@
 #include "System/Transform.hpp"
 #include "System/float4.h"
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -43,17 +46,23 @@ struct UnitVertex {
 	float px, py, pz;
 	float nx, ny, nz;
 	float u, v;
+	float boneId0, boneId1, boneId2, boneId3;
+	float weight0, weight1, weight2, weight3;
 };
+
+constexpr size_t kMaxBones = 256;
 
 struct alignas(16) UBOLayout {
 	float viewProj[16];
-	float model[16];
+	float object[16];
 	float sunDir[4];     // xyz + unused w
 	float materialRGB[4];// rgb + unused w; per-draw recolour knob
 	float camPos[4];     // xyz + unused w; world-space view origin
 	float sunAmbient[4]; // model ambient RGB + unused w
 	float sunDiffuse[4]; // model diffuse RGB + unused w
 	float sunSpecular[4];// model specular RGB + exponent
+	float pieceMats[kMaxBones][16];
+	float bindMats[kMaxBones][16];
 };
 
 
@@ -61,6 +70,8 @@ constexpr const char* kVertexGlsl = R"(#version 450
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV0;
+layout(location = 3) in vec4 aBoneIDs;
+layout(location = 4) in vec4 aBoneWeights;
 
 layout(location = 0) out vec3 vNormalWS;
 layout(location = 1) out vec2 vUV;
@@ -68,19 +79,47 @@ layout(location = 2) out vec3 vWorldPos;
 
 layout(set = 0, binding = 0) uniform UBO {
     mat4 uViewProj;
-    mat4 uModel;
+    mat4 uObject;
     vec4 uSunDir;      // world-space light direction
     vec4 uMaterialRGB; // team colour for the alpha-mask channel
     vec4 uCamPos;
     vec4 uSunAmbient;
     vec4 uSunDiffuse;
     vec4 uSunSpecular;
+    mat4 uPieceMats[256];
+    mat4 uBindMats[256];
 } ubo;
 
+int BoneIndex(float v) {
+    return clamp(int(v + 0.5), 0, 255);
+}
+
+void AddBoneInfluence(inout vec4 posSum, inout vec4 normalSum, vec4 piecePos, vec4 pieceNormal, int baseBone, int bone, float weight) {
+    if (weight <= 0.0)
+        return;
+    mat4 skinMat = ubo.uPieceMats[bone] * inverse(ubo.uBindMats[bone]) * ubo.uBindMats[baseBone];
+    posSum += (skinMat * piecePos) * weight;
+    normalSum += (skinMat * pieceNormal) * weight;
+}
+
 void main() {
-    vNormalWS = mat3(ubo.uModel) * aNormal;
+    vec4 weights = max(aBoneWeights, vec4(0.0)) / 255.0;
+    float weightSum = max(dot(weights, vec4(1.0)), 0.0001);
+    weights /= weightSum;
+
+    int b0 = BoneIndex(aBoneIDs.x);
+    vec4 piecePos = vec4(aPos, 1.0);
+    vec4 pieceNormal = vec4(aNormal, 0.0);
+
+    vec4 modelPos = ubo.uPieceMats[b0] * piecePos * weights.x;
+    vec4 modelNormal = ubo.uPieceMats[b0] * pieceNormal * weights.x;
+    AddBoneInfluence(modelPos, modelNormal, piecePos, pieceNormal, b0, BoneIndex(aBoneIDs.y), weights.y);
+    AddBoneInfluence(modelPos, modelNormal, piecePos, pieceNormal, b0, BoneIndex(aBoneIDs.z), weights.z);
+    AddBoneInfluence(modelPos, modelNormal, piecePos, pieceNormal, b0, BoneIndex(aBoneIDs.w), weights.w);
+
+    vNormalWS = mat3(ubo.uObject) * modelNormal.xyz;
     vUV = aUV0;
-    vec4 worldH = ubo.uModel * vec4(aPos, 1.0);
+    vec4 worldH = ubo.uObject * modelPos;
     vWorldPos = worldH.xyz;
     gl_Position = ubo.uViewProj * worldH;
 }
@@ -94,13 +133,15 @@ layout(location = 0) out vec4 fragColor;
 
 layout(set = 0, binding = 0) uniform UBO {
     mat4 uViewProj;
-    mat4 uModel;
+    mat4 uObject;
     vec4 uSunDir;
     vec4 uMaterialRGB;
     vec4 uCamPos;
     vec4 uSunAmbient;
     vec4 uSunDiffuse;
     vec4 uSunSpecular;
+    mat4 uPieceMats[256];
+    mat4 uBindMats[256];
 } ubo;
 
 layout(set = 0, binding = 1) uniform sampler2D uDiffuse;
@@ -150,10 +191,8 @@ void main() {
 
 
 // Pack a piece's raw piece-local vertices into the compact UnitVertex
-// layout. Bind pose / animation are applied per-draw through the model
-// matrix UBO using LocalModelPiece::GetModelSpaceMatrix() - same chain
-// the GL path drives through TransformsUploader, just routed through
-// individual draw calls instead of an SSBO.
+// layout. Bone IDs and weights are preserved so the Metal shader can
+// apply the same piece/bind-pose skinning path used by GL4.
 bool PackPieceGeometry(const S3DModelPiece* piece,
                        std::vector<UnitVertex>& verts,
                        std::vector<uint32_t>&   inds)
@@ -169,14 +208,69 @@ bool PackPieceGeometry(const S3DModelPiece* piece,
 	verts.clear();
 	verts.reserve(pieceVerts.size());
 	for (const SVertexData& v : pieceVerts) {
+		const auto boneID = [&v](size_t idx) {
+			return static_cast<float>(uint16_t(v.boneIDsLow[idx]) | (uint16_t(v.boneIDsHigh[idx]) << 8u));
+		};
 		verts.push_back(UnitVertex{
 			v.pos.x, v.pos.y, v.pos.z,
 			v.normal.x, v.normal.y, v.normal.z,
 			v.texCoords[0].x, v.texCoords[0].y,
+			boneID(0), boneID(1), boneID(2), boneID(3),
+			static_cast<float>(v.boneWeights[0]),
+			static_cast<float>(v.boneWeights[1]),
+			static_cast<float>(v.boneWeights[2]),
+			static_cast<float>(v.boneWeights[3]),
 		});
 	}
 
 	inds.assign(pieceInds.begin(), pieceInds.end());
+	return true;
+}
+
+void StoreMatrix(float* dst, const CMatrix44f& mat)
+{
+	std::memcpy(dst, mat.m, sizeof(float) * 16);
+}
+
+void StoreIdentity(float* dst)
+{
+	const CMatrix44f identity;
+	StoreMatrix(dst, identity);
+}
+
+void ResetMatrixPalette(UBOLayout& ubo)
+{
+	for (size_t i = 0; i < kMaxBones; ++i) {
+		StoreIdentity(ubo.pieceMats[i]);
+		StoreIdentity(ubo.bindMats[i]);
+	}
+}
+
+template<typename TObject>
+bool FillObjectSkinningData(const TObject* object, UBOLayout& ubo)
+{
+	if (object == nullptr || object->model == nullptr)
+		return false;
+
+	const ScopedTransformMemAlloc& transformAlloc = MetalModelData::GetTransformMemAlloc(object);
+	if (!transformAlloc.Valid())
+		return false;
+
+	const float timeOffset = std::clamp(globalRendering->timeOffset, 0.0f, 1.0f);
+	StoreMatrix(ubo.object, Transform::Lerp(transformAlloc[0], transformAlloc[1], timeOffset).ToMatrix());
+
+	ResetMatrixPalette(ubo);
+
+	const size_t numPieces = std::min<size_t>(object->model->numPieces, kMaxBones);
+	for (size_t i = 0; i < numPieces; ++i) {
+		const size_t transformBase = 2 * (1 + i);
+		StoreMatrix(ubo.pieceMats[i], Transform::Lerp(transformAlloc[transformBase + 0], transformAlloc[transformBase + 1], timeOffset).ToMatrix());
+
+		if (i < object->model->pieceObjects.size() && object->model->pieceObjects[i] != nullptr) {
+			StoreMatrix(ubo.bindMats[i], object->model->pieceObjects[i]->bposeTransform.ToMatrix());
+		}
+	}
+
 	return true;
 }
 
@@ -227,8 +321,8 @@ MetalUnitMesh::MetalUnitMesh()
 	UBOLayout seed{};
 	seed.viewProj[0]  = 1.0f; seed.viewProj[5]  = 1.0f;
 	seed.viewProj[10] = 1.0f; seed.viewProj[15] = 1.0f;
-	seed.model[0]     = 1.0f; seed.model[5]     = 1.0f;
-	seed.model[10]    = 1.0f; seed.model[15]    = 1.0f;
+	seed.object[0]    = 1.0f; seed.object[5]    = 1.0f;
+	seed.object[10]   = 1.0f; seed.object[15]   = 1.0f;
 	seed.sunDir[1]    = 1.0f;
 	seed.materialRGB[0] = 0.75f;
 	seed.materialRGB[1] = 0.75f;
@@ -243,6 +337,10 @@ MetalUnitMesh::MetalUnitMesh()
 	seed.sunSpecular[1] = 0.45f;
 	seed.sunSpecular[2] = 0.45f;
 	seed.sunSpecular[3] = 24.0f;
+	for (size_t i = 0; i < kMaxBones; ++i) {
+		seed.pieceMats[i][0] = seed.pieceMats[i][5] = seed.pieceMats[i][10] = seed.pieceMats[i][15] = 1.0f;
+		seed.bindMats[i][0] = seed.bindMats[i][5] = seed.bindMats[i][10] = seed.bindMats[i][15] = 1.0f;
+	}
 	uniformBuffer = backend.CreateBuffer(sizeof(UBOLayout), &seed);
 	if (!uniformBuffer || !uniformBuffer->IsValid()) {
 		LOG_L(L_ERROR, "[MetalUnitMesh] uniform buffer creation failed");
@@ -257,6 +355,8 @@ MetalUnitMesh::MetalUnitMesh()
 		VertexAttribute{ .location = 0, .bufferSlot = 0, .offset = offsetof(UnitVertex, px), .format = VertexFormat::Float3 },
 		VertexAttribute{ .location = 1, .bufferSlot = 0, .offset = offsetof(UnitVertex, nx), .format = VertexFormat::Float3 },
 		VertexAttribute{ .location = 2, .bufferSlot = 0, .offset = offsetof(UnitVertex, u),  .format = VertexFormat::Float2 },
+		VertexAttribute{ .location = 3, .bufferSlot = 0, .offset = offsetof(UnitVertex, boneId0), .format = VertexFormat::Float4 },
+		VertexAttribute{ .location = 4, .bufferSlot = 0, .offset = offsetof(UnitVertex, weight0), .format = VertexFormat::Float4 },
 	};
 	pd.vertexBindings = {
 		VertexBindingLayout{ .slot = 0, .stride = sizeof(UnitVertex) },
@@ -282,6 +382,13 @@ const MetalUnitMesh::ModelBuffers* MetalUnitMesh::GetOrUploadModel(const S3DMode
 	auto it = modelCache.find(model);
 	if (it != modelCache.end())
 		return it->second.anyGeometry ? &it->second : nullptr;
+
+	if (static_cast<size_t>(model->numPieces) > kMaxBones) {
+		LOG_L(L_WARNING, "[MetalUnitMesh] skipping model '%s' with %d pieces (Metal palette cap is %zu)",
+			model->name.c_str(), model->numPieces, kMaxBones);
+		modelCache.emplace(model, ModelBuffers{});
+		return nullptr;
+	}
 
 	auto& backend = *globalRendering->renderBackend;
 	ModelBuffers mb;
@@ -365,7 +472,7 @@ void MetalUnitMesh::Draw()
 
 	pipeline->Enable();
 
-	auto drawSolid = [&](const CSolidObject* so, float matR, float matG, float matB) {
+	auto drawSolid = [&](const auto* so, float matR, float matG, float matB) {
 		if (so == nullptr || so->model == nullptr)
 			return;
 		const ModelBuffers* mb = GetOrUploadModel(so->model);
@@ -395,7 +502,9 @@ void MetalUnitMesh::Draw()
 		ubo.materialRGB[1] = matG;
 		ubo.materialRGB[2] = matB;
 
-		const CMatrix44f worldMat = so->ComposeMatrix(so->pos);
+		if (!FillObjectSkinningData(so, ubo))
+			return;
+		uniformBuffer->UpdateData(&ubo, sizeof(ubo), 0);
 
 		const auto& lpieces = so->localModel.pieces;
 		const size_t pieceCount = std::min(lpieces.size(), mb->pieces.size());
@@ -407,18 +516,6 @@ void MetalUnitMesh::Draw()
 			const LocalModelPiece& lmp = lpieces[i];
 			if (!lmp.GetScriptVisible())
 				continue;
-
-			// pieceModelMat is the piece's transform relative to the
-			// model root, with COB animation already chained in via
-			// pieceSpaceTra updates. Combining with the unit's world
-			// transform gives the final piece-to-world matrix. This is
-			// the path the next transform-boundary slice will replace
-			// with common drawer-owned transform data.
-			const CMatrix44f& pieceModelMat = lmp.GetModelSpaceMatrix();
-			const CMatrix44f finalMat = worldMat * pieceModelMat;
-			std::memcpy(ubo.model, finalMat.m, sizeof(ubo.model));
-
-			uniformBuffer->UpdateData(&ubo, sizeof(ubo), 0);
 
 			pipeline->BindUniformBuffer(0, *uniformBuffer, 0, sizeof(ubo));
 			if (diffuse != nullptr)
@@ -432,7 +529,7 @@ void MetalUnitMesh::Draw()
 	};
 
 	for (const CUnit* u : active) {
-		if (u == nullptr || u->noDraw)
+		if (u == nullptr || u->noDraw || u->drawFlag == 0 || u->GetIsIcon())
 			continue;
 		// Per-unit team colour - this is the input to the alpha-mask
 		// replacement in the FS, not a flat tint. CUnit.team ->
@@ -456,7 +553,7 @@ void MetalUnitMesh::Draw()
 	// that gadget runs (S9-C6) and harmless in the meantime.
 	for (int id : featureHandler.GetActiveFeatureIDs()) {
 		const CFeature* f = featureHandler.GetFeature(id);
-		if (f == nullptr || f->noDraw)
+		if (f == nullptr || f->noDraw || f->drawFlag == 0)
 			continue;
 		drawSolid(f, 0.45f, 0.40f, 0.32f);
 	}

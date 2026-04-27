@@ -44,6 +44,9 @@
 #include "Rendering/Textures/ColorMap.h"
 #include "Rendering/Textures/3DOTextureHandler.h"
 #include "Rendering/Textures/S3OTextureHandler.h"
+#if defined(RENDER_BACKEND_METAL)
+#include "Rendering/MetalModelData.h"
+#endif
 #include "Map/BaseGroundDrawer.h"
 #include "Map/ReadMap.h"
 #include "Game/Camera.h"
@@ -277,6 +280,9 @@ void CWorldDrawer::Kill()
 {
 	infoTextureHandler = nullptr;
 
+#if defined(RENDER_BACKEND_METAL)
+	MetalModelData::Kill();
+#endif
 	IWater::KillWater();
 	ISky::KillSky();
 	spring::SafeDelete(grassDrawer);
@@ -321,11 +327,16 @@ void CWorldDrawer::Update(bool newSimFrame)
 	// (it updates unitdrawpos which is used for maximized minimap too)
 	// unitDrawer->Update();
 	// lineDrawer.UpdateLineStipple();
+#if defined(RENDER_BACKEND_METAL)
+	MetalModelData::Update();
+#else
 	CUnitDrawer::UpdateStatic();
 	CFeatureDrawer::UpdateStatic();
 	projectileDrawer->UpdateDrawFlags();
+#endif
 
 	if (newSimFrame) {
+#if !defined(RENDER_BACKEND_METAL)
 		projectileDrawer->UpdateTextures();
 
 		{
@@ -334,6 +345,7 @@ void CWorldDrawer::Update(bool newSimFrame)
 			ISky::GetSky()->Update();
 			IWater::GetWater()->Update();
 		}
+#endif
 
 		// once every simframe is frequent enough here
 		// NB: errors will not be logged until frame 0

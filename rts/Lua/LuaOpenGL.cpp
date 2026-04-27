@@ -544,12 +544,21 @@ static int MetalLuaGL_RenderToTexture(lua_State* L)
 
 static int MetalLuaGL_TexRect(lua_State* L)
 {
-	MetalLuaUI::DrawBoundTextureRect(
-		luaL_checkfloat(L, 1),
-		luaL_checkfloat(L, 2),
-		luaL_checkfloat(L, 3),
-		luaL_checkfloat(L, 4)
-	);
+	const float x1 = luaL_checkfloat(L, 1);
+	const float y1 = luaL_checkfloat(L, 2);
+	const float x2 = luaL_checkfloat(L, 3);
+	const float y2 = luaL_checkfloat(L, 4);
+	if (lua_gettop(L) >= 8) {
+		MetalLuaUI::DrawBoundTextureRectUV(
+			x1, y1, x2, y2,
+			luaL_checkfloat(L, 5),
+			luaL_checkfloat(L, 6),
+			luaL_checkfloat(L, 7),
+			luaL_checkfloat(L, 8)
+		);
+	} else {
+		MetalLuaUI::DrawBoundTextureRect(x1, y1, x2, y2);
+	}
 	return 0;
 }
 

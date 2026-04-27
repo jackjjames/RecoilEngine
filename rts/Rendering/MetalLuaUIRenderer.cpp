@@ -68,11 +68,22 @@ struct ListCommand {
 	enum class Type {
 		Text,
 		Rect,
+		Texture,
 	};
 
 	Type type = Type::Rect;
 	LuaUITextDraw text;
 	LuaUIRectDraw rect;
+	int textureID = 0;
+	float x1 = 0.0f;
+	float y1 = 0.0f;
+	float x2 = 0.0f;
+	float y2 = 0.0f;
+	float u1 = 0.0f;
+	float v1 = 0.0f;
+	float u2 = 1.0f;
+	float v2 = 1.0f;
+	float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 struct RectVertex {
@@ -372,10 +383,18 @@ public:
 		for (const ListCommand& command: it->second) {
 			if (command.type == ListCommand::Type::Text) {
 				DrawText(command.text);
-			} else {
+			} else if (command.type == ListCommand::Type::Rect) {
 				const auto previousColor = color;
 				std::copy(command.rect.color, command.rect.color + 4, color.begin());
 				DrawRect(command.rect.x1, command.rect.y1, command.rect.x2, command.rect.y2);
+				color = previousColor;
+			} else {
+				const auto previousColor = color;
+				const int previousTexture = boundTexture;
+				std::copy(command.color, command.color + 4, color.begin());
+				boundTexture = command.textureID;
+				DrawBoundTextureRectUV(command.x1, command.y1, command.x2, command.y2, command.u1, command.v1, command.u2, command.v2);
+				boundTexture = previousTexture;
 				color = previousColor;
 			}
 		}
@@ -478,6 +497,23 @@ public:
 		const auto it = textures.find(boundTexture);
 		if (it == textures.end())
 			return;
+
+		if (capturingList != 0) {
+			ListCommand command;
+			command.type = ListCommand::Type::Texture;
+			command.textureID = boundTexture;
+			command.x1 = x1;
+			command.y1 = y1;
+			command.x2 = x2;
+			command.y2 = y2;
+			command.u1 = u1;
+			command.v1 = v1;
+			command.u2 = u2;
+			command.v2 = v2;
+			std::copy(color.begin(), color.end(), command.color);
+			lists[capturingList].push_back(std::move(command));
+			return;
+		}
 
 		const auto& texture = it->second;
 		if (capturingTexture != 0) {

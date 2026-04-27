@@ -477,6 +477,28 @@ public:
 			matrixStack.pop_back();
 	}
 
+	void LoadIdentity()
+	{
+		CurrentMatrix() = Affine2D{};
+	}
+
+	void Ortho(float left, float right, float bottom, float top)
+	{
+		const float width = right - left;
+		const float height = top - bottom;
+		if (width == 0.0f || height == 0.0f)
+			return;
+
+		CurrentMatrix() = Affine2D{
+			.a = 2.0f / width,
+			.b = 0.0f,
+			.c = 0.0f,
+			.d = 2.0f / height,
+			.tx = -(right + left) / width,
+			.ty = -(top + bottom) / height,
+		};
+	}
+
 	void Translate(float x, float y)
 	{
 		CurrentMatrix().PostTranslate(x, y);
@@ -957,6 +979,8 @@ namespace MetalLuaUI
 	void CallList(int listID) { GetRenderer().CallList(listID); }
 	void PushMatrix() { GetRenderer().PushMatrix(); }
 	void PopMatrix() { GetRenderer().PopMatrix(); }
+	void LoadIdentity() { GetRenderer().LoadIdentity(); }
+	void Ortho(float left, float right, float bottom, float top, float, float) { GetRenderer().Ortho(left, right, bottom, top); }
 	void Translate(float x, float y, float) { GetRenderer().Translate(x, y); }
 	void Scale(float x, float y, float) { GetRenderer().Scale(x, y); }
 	void SetScissor(bool enabled, int x, int y, int width, int height) { GetRenderer().SetScissor(enabled, x, y, width, height); }

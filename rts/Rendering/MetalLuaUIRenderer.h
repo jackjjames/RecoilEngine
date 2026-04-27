@@ -29,6 +29,8 @@ namespace MetalLuaUI
 
 	void PushMatrix();
 	void PopMatrix();
+	void LoadIdentity();
+	void Ortho(float left, float right, float bottom, float top, float zNear = -1.0f, float zFar = 1.0f);
 	void Translate(float x, float y, float z = 0.0f);
 	void Scale(float x, float y, float z = 1.0f);
 

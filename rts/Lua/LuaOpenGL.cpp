@@ -902,6 +902,30 @@ static int MetalLuaGL_BlendFunc(lua_State*)
 	return 0;
 }
 
+static int MetalLuaGL_MatrixMode(lua_State*)
+{
+	return 0;
+}
+
+static int MetalLuaGL_LoadIdentity(lua_State*)
+{
+	MetalLuaUI::LoadIdentity();
+	return 0;
+}
+
+static int MetalLuaGL_Ortho(lua_State* L)
+{
+	MetalLuaUI::Ortho(
+		luaL_checkfloat(L, 1),
+		luaL_checkfloat(L, 2),
+		luaL_checkfloat(L, 3),
+		luaL_checkfloat(L, 4),
+		luaL_optnumber(L, 5, -1.0f),
+		luaL_optnumber(L, 6, 1.0f)
+	);
+	return 0;
+}
+
 static int MetalLuaGL_PushMatrix(lua_State*)
 {
 	MetalLuaUI::PushMatrix();
@@ -1219,6 +1243,9 @@ bool LuaOpenGL::PushEntries(lua_State* L)
 	LuaPushRawNamedCFunc(L, "Scissor", MetalLuaGL_Scissor);
 	LuaPushRawNamedCFunc(L, "Blending", MetalLuaGL_Blending);
 	LuaPushRawNamedCFunc(L, "BlendFunc", MetalLuaGL_BlendFunc);
+	LuaPushRawNamedCFunc(L, "MatrixMode", MetalLuaGL_MatrixMode);
+	LuaPushRawNamedCFunc(L, "LoadIdentity", MetalLuaGL_LoadIdentity);
+	LuaPushRawNamedCFunc(L, "Ortho", MetalLuaGL_Ortho);
 	LuaPushRawNamedCFunc(L, "PushMatrix", MetalLuaGL_PushMatrix);
 	LuaPushRawNamedCFunc(L, "PopMatrix", MetalLuaGL_PopMatrix);
 	LuaPushRawNamedCFunc(L, "Translate", MetalLuaGL_Translate);

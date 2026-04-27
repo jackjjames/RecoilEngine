@@ -503,6 +503,13 @@ void CMiniMap::SetGeometry(int px, int py, int sx, int sy)
 	UpdateGeometry();
 }
 
+void CMiniMap::ReloadGeometryFromConfig()
+{
+	RECOIL_DETAILED_TRACY_ZONE;
+	ParseGeometry(configHandler->GetString("MiniMapGeometry"));
+	UpdateGeometry();
+}
+
 
 void CMiniMap::UpdateGeometry()
 {

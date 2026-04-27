@@ -45,6 +45,7 @@ public:
 
 	void UpdateGeometry();
 	void SetGeometry(int px, int py, int sx, int sy);
+	void ReloadGeometryFromConfig();
 
 	void AddNotification(float3 pos, float3 color, float alpha);
 

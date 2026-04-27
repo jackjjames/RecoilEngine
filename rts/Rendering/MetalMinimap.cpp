@@ -5,6 +5,7 @@
 #include "Rendering/MetalMinimap.h"
 
 #include "Game/GlobalUnsynced.h"
+#include "Game/UI/MiniMap.h"
 #include "Map/MapDimensions.h"
 #include "Map/ReadMap.h"
 #include "Map/SMF/SMFFormat.h"
@@ -26,6 +27,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 
@@ -33,13 +35,6 @@ namespace {
 
 constexpr uint32_t kGL_RGBA8 = 0x8058;
 constexpr int      kMinimapMip0 = 1024;
-
-// Bottom-left corner placement in NDC (y-up). The map quad spans
-// kPanelSize x kPanelSize, leaving kPanelMargin between it and the
-// screen edges. Y is corrected for window aspect at draw time so
-// non-square viewports don't squash the map.
-constexpr float kPanelHalf   = 0.18f; // half-width of the panel in NDC X
-constexpr float kPanelMargin = 0.02f;
 
 // Background quad is two triangles, vec2 pos + vec2 uv. Six verts.
 struct BgVertex {
@@ -71,12 +66,25 @@ layout(set = 0, binding = 1) uniform sampler2D uMinimap;
 
 void main() {
     vec3 col = texture(uMinimap, vUV).rgb;
-    // 1-pixel inset border so the minimap reads as a discrete UI
-    // element rather than blending into the terrain underneath.
+    // Framed viewport treatment: dark translucent outer lip, bright
+    // inner bevel, then the map texture. This keeps the Metal
+    // minimap visually separated from the world like BAR's PIP/minimap
+    // widgets instead of reading as raw map texture pasted on top.
     vec2 d = min(vUV, 1.0 - vUV);
     float edge = min(d.x, d.y);
-    if (edge < 0.01) col = vec3(1.0);
-    fragColor = vec4(col, 0.92);
+    float alpha = 0.94;
+    if (edge < 0.018) {
+        col = vec3(0.015, 0.020, 0.025);
+        alpha = 0.88;
+    } else if (edge < 0.028) {
+        col = vec3(0.82, 0.88, 0.95);
+        alpha = 0.98;
+    } else {
+        // Mild contrast lift to make the embedded SMF minimap read
+        // crisper, closer to BAR's SSAA/minimap clarity target.
+        col = clamp((col - vec3(0.5)) * 1.08 + vec3(0.5), 0.0, 1.0);
+    }
+    fragColor = vec4(col, alpha);
 }
 )";
 
@@ -115,6 +123,28 @@ std::vector<uint8_t> LoadMinimapRGBA8()
 	std::vector<uint8_t> rgba(static_cast<size_t>(kMinimapMip0) * kMinimapMip0 * 4, 0);
 	MetalDXT::DecompressBC1Image(dxt1.data(), rgba.data(), kMinimapMip0, kMinimapMip0);
 	return rgba;
+}
+
+std::pair<float, float> ScreenToMapUV(float sx, float sy, CMiniMap::RotationOptions rotation)
+{
+	switch (rotation) {
+		case CMiniMap::ROTATION_90:  return {1.0f - sy, sx};
+		case CMiniMap::ROTATION_180: return {1.0f - sx, 1.0f - sy};
+		case CMiniMap::ROTATION_270: return {sy, 1.0f - sx};
+		case CMiniMap::ROTATION_0:
+		default:                     return {sx, sy};
+	}
+}
+
+std::pair<float, float> MapUVToScreen(float u, float v, CMiniMap::RotationOptions rotation)
+{
+	switch (rotation) {
+		case CMiniMap::ROTATION_90:  return {v, 1.0f - u};
+		case CMiniMap::ROTATION_180: return {1.0f - u, 1.0f - v};
+		case CMiniMap::ROTATION_270: return {1.0f - v, u};
+		case CMiniMap::ROTATION_0:
+		default:                     return {u, v};
+	}
 }
 
 } // namespace
@@ -220,32 +250,61 @@ void MetalMinimap::Draw()
 {
 	if (!valid)
 		return;
+	if (minimap == nullptr)
+		return;
+	if (globalRendering == nullptr || globalRendering->viewSizeX <= 1 || globalRendering->viewSizeY <= 1)
+		return;
 
-	// Aspect-correct the panel: we want a square minimap regardless
-	// of window aspect, and panelHalfX in NDC corresponds to a
-	// different pixel count than panelHalfY at non-square ratios.
-	const float aspect = (globalRendering != nullptr && globalRendering->aspectRatio > 0.0f)
-		? globalRendering->aspectRatio : 1.0f;
-	const float halfX = kPanelHalf;
-	const float halfY = kPanelHalf * aspect;
+	if (!restoredCommonGeometry && (minimap->GetMinimized() || minimap->GetSizeX() <= 1 || minimap->GetSizeY() <= 1)) {
+		minimap->SetMinimized(false);
+		minimap->ReloadGeometryFromConfig();
+		restoredCommonGeometry = true;
+	}
 
-	// Bottom-left anchor in NDC (y-up).
-	const float minX = -1.0f + kPanelMargin;
-	const float maxX = minX + 2.0f * halfX;
-	const float minY = -1.0f + kPanelMargin;
-	const float maxY = minY + 2.0f * halfY;
+	if (minimap->GetMinimized() || minimap->GetMaximized())
+		return;
+
+	// CMiniMap owns geometry/config. LuaUI's gui_minimap/gui_pip can
+	// move/resize the engine minimap through Spring.SendCommands
+	// ("minimap geometry ..."), and the engine applies constraints in
+	// CMiniMap::UpdateGeometry. Metal consumes that final state here
+	// instead of maintaining any parallel layout constants.
+	const int px = minimap->GetPosX();
+	const int py = minimap->GetPosY();
+	const int sx = minimap->GetSizeX();
+	const int sy = minimap->GetSizeY();
+	if (sx <= 0 || sy <= 0)
+		return;
+	// If BAR/LuaUI drives CMiniMap into a large placement viewport,
+	// do not let the engine minimap cover the Metal world view.
+	if (sx > (globalRendering->viewSizeX * 3) / 5 || sy > (globalRendering->viewSizeY * 3) / 5)
+		return;
+
+	const float invViewX = 1.0f / static_cast<float>(globalRendering->viewSizeX);
+	const float invViewY = 1.0f / static_cast<float>(globalRendering->viewSizeY);
+	const float minX = -1.0f + 2.0f * static_cast<float>(px)      * invViewX;
+	const float maxX = -1.0f + 2.0f * static_cast<float>(px + sx) * invViewX;
+	const float minY = -1.0f + 2.0f * static_cast<float>(py)      * invViewY;
+	const float maxY = -1.0f + 2.0f * static_cast<float>(py + sy) * invViewY;
+	const CMiniMap::RotationOptions rotation = minimap->GetRotationOption();
+
+	const auto [uvBLx, uvBLy] = ScreenToMapUV(0.0f, 1.0f, rotation);
+	const auto [uvBRx, uvBRy] = ScreenToMapUV(1.0f, 1.0f, rotation);
+	const auto [uvTRx, uvTRy] = ScreenToMapUV(1.0f, 0.0f, rotation);
+	const auto [uvTLx, uvTLy] = ScreenToMapUV(0.0f, 0.0f, rotation);
 
 	// SMF UV: tile (0, 0) is the south-west corner of the map; minimap
 	// sample (0, 0) = top-left in image space which BAR's map convention
 	// treats as the north-west corner (low Z). So map +Z grows downward
-	// in V; we keep V un-flipped here so the minimap reads correctly.
+	// in V. Rotation follows CMiniMap so mouse picking and Metal dots
+	// stay aligned with the rendered image.
 	const BgVertex bgVerts[6] = {
-		{ {minX, minY}, {0.0f, 1.0f} },
-		{ {maxX, minY}, {1.0f, 1.0f} },
-		{ {maxX, maxY}, {1.0f, 0.0f} },
-		{ {minX, minY}, {0.0f, 1.0f} },
-		{ {maxX, maxY}, {1.0f, 0.0f} },
-		{ {minX, maxY}, {0.0f, 0.0f} },
+		{ {minX, minY}, {uvBLx, uvBLy} },
+		{ {maxX, minY}, {uvBRx, uvBRy} },
+		{ {maxX, maxY}, {uvTRx, uvTRy} },
+		{ {minX, minY}, {uvBLx, uvBLy} },
+		{ {maxX, maxY}, {uvTRx, uvTRy} },
+		{ {minX, maxY}, {uvTLx, uvTLy} },
 	};
 	bgVertexBuffer->UpdateData(bgVerts, sizeof(bgVerts), 0);
 
@@ -261,12 +320,6 @@ void MetalMinimap::Draw()
 	if (units.empty())
 		return;
 
-	// Dot half-extent in NDC: a 4x4-pixel-ish square at typical 1280x720,
-	// scaled with the panel size so the dots remain readable on tall
-	// vs wide windows.
-	const float dotHalfX = halfX * 0.012f;
-	const float dotHalfY = halfY * 0.012f;
-
 	// Each unit emits 6 verts (two triangles).
 	std::vector<DotVertex> dots;
 	dots.reserve(units.size() * 6);
@@ -276,15 +329,22 @@ void MetalMinimap::Draw()
 	if (mapW <= 0.0f || mapH <= 0.0f)
 		return;
 
+	// Dot size follows CMiniMap's configured unit scaling instead of
+	// a hardcoded panel fraction. Convert world-space minimap unit size
+	// back through the current map rectangle into NDC extents.
+	const float dotHalfX = std::clamp((minimap->GetUnitSizeX() / mapW) * (maxX - minX), 2.0f * invViewX, 7.0f * invViewX);
+	const float dotHalfY = std::clamp((minimap->GetUnitSizeY() / mapH) * (maxY - minY), 2.0f * invViewY, 7.0f * invViewY);
+
 	for (const CUnit* u : units) {
 		if (u == nullptr)
 			continue;
 
 		const float uMap = std::clamp(u->pos.x / mapW, 0.0f, 1.0f);
 		const float vMap = std::clamp(u->pos.z / mapH, 0.0f, 1.0f);
-		const float ndcX = minX + uMap * (maxX - minX);
-		// V grows top-to-bottom on the minimap; NDC Y grows bottom-to-top.
-		const float ndcY = maxY - vMap * (maxY - minY);
+		const auto [screenU, screenV] = MapUVToScreen(uMap, vMap, rotation);
+		const float ndcX = minX + screenU * (maxX - minX);
+		// screenV grows top-to-bottom on the minimap; NDC Y grows bottom-to-top.
+		const float ndcY = maxY - screenV * (maxY - minY);
 
 		float color[4] = { 0.7f, 0.7f, 0.7f, 1.0f };
 		if (u->team >= 0 && teamHandler.IsValidTeam(u->team)) {

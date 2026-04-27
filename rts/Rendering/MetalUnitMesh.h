@@ -16,13 +16,14 @@ struct S3DModel;
 // 3D unit + feature drawer. For every active unit / feature whose model
 // has geometry attached, walks the LocalModel piece tree and draws each
 // piece at its current animated transform (unit world transform * piece
-// model-space transform). Diffuse texture sampling with alpha-mask team
-// colour replacement matches GL's springcontent ModelFragProg.glsl
-// convention: alpha=0 keeps diffuse, alpha=1 swaps to team colour.
+// model-space transform). S3O tex1/tex2 sampling follows GL's
+// springcontent ModelFragProg.glsl convention: tex1 alpha drives
+// team-colour replacement, tex2 R is self-illumination, tex2 G drives
+// specular/reflectivity, and tex2 A contributes opacity.
 // Lazily uploads one vertex / index buffer pair per S3DModelPiece.
 //
 // Intentionally missing:
-//   - tex2 / specular / self-illumination sampling.
+//   - real cubemap/environment reflections.
 //   - LOD + frustum culling; every active object is submitted every frame.
 //   - shadow pass (S9-C5a).
 //   - GPU-side transform SSBO: matrices are pushed through the per-draw

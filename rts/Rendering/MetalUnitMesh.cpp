@@ -8,6 +8,7 @@
 #include "Game/CameraHandler.h"
 #include "Rendering/Env/ISky.h"
 #include "Rendering/Env/SkyLight.h"
+#include "Rendering/Env/SunLighting.h"
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/IBuffer.h"
 #include "Rendering/IRenderBackend.h"
@@ -50,6 +51,9 @@ struct alignas(16) UBOLayout {
 	float sunDir[4];     // xyz + unused w
 	float materialRGB[4];// rgb + unused w; per-draw recolour knob
 	float camPos[4];     // xyz + unused w; world-space view origin
+	float sunAmbient[4]; // model ambient RGB + unused w
+	float sunDiffuse[4]; // model diffuse RGB + unused w
+	float sunSpecular[4];// model specular RGB + exponent
 };
 
 
@@ -68,6 +72,9 @@ layout(set = 0, binding = 0) uniform UBO {
     vec4 uSunDir;      // world-space light direction
     vec4 uMaterialRGB; // team colour for the alpha-mask channel
     vec4 uCamPos;
+    vec4 uSunAmbient;
+    vec4 uSunDiffuse;
+    vec4 uSunSpecular;
 } ubo;
 
 void main() {
@@ -91,6 +98,9 @@ layout(set = 0, binding = 0) uniform UBO {
     vec4 uSunDir;
     vec4 uMaterialRGB;
     vec4 uCamPos;
+    vec4 uSunAmbient;
+    vec4 uSunDiffuse;
+    vec4 uSunSpecular;
 } ubo;
 
 layout(set = 0, binding = 1) uniform sampler2D uDiffuse;
@@ -110,8 +120,15 @@ void main() {
     vec3 N = normalize(vNormalWS);
     vec3 L = normalize(ubo.uSunDir.xyz);
     float NdotL = max(dot(N, L), 0.0);
-    float ambient = 0.35 + 0.15 * max(N.y, 0.0);
-    vec3 lit = albedo * (ambient + NdotL * 0.7);
+    vec3 modelLight = max(ubo.uSunAmbient.rgb, vec3(0.03)) + ubo.uSunDiffuse.rgb * NdotL;
+
+    // Approximate the GL model shader's cubemap reflection term until
+    // the Metal path has sky/reflection cubemaps. Tex2.G remains the
+    // material's reflectivity/specular knob, so metal panels get the
+    // stronger high-contrast read BAR expects without inventing new data.
+    float hemi = 0.35 + 0.65 * max(N.y, 0.0);
+    vec3 envLight = mix(vec3(0.20, 0.22, 0.24), vec3(0.70, 0.78, 0.86), hemi);
+    vec3 mixedLight = mix(modelLight, envLight * (0.65 + 0.35 * NdotL), clamp(extra.g, 0.0, 1.0));
 
     // Phong specular. Cubemap-based env reflections (GL ModelFragProg
     // uses `specular = textureCube(reflectTex, ...) * sunSpecular`)
@@ -120,13 +137,14 @@ void main() {
     // canopies) a recognisable highlight.
     vec3 V = normalize(ubo.uCamPos.xyz - vWorldPos);
     vec3 H = normalize(L + V);
-    float spec = pow(max(dot(N, H), 0.0), 24.0) * extra.g * 4.0 * NdotL;
+    float specExp = max(8.0, ubo.uSunSpecular.a);
+    vec3 spec = ubo.uSunSpecular.rgb * pow(max(dot(N, H), 0.0), specExp) * extra.g * 2.5 * NdotL;
 
     // R channel doubles as a self-illum mask: glow trim stays bright
     // even in shadow, matches the GL path's `reflection += extra.rrr`.
-    vec3 emissive = vec3(extra.r);
+    vec3 emissive = vec3(extra.r) * 1.35;
 
-    fragColor = vec4(lit + spec + emissive, 1.0);
+    fragColor = vec4(albedo * (mixedLight + emissive) + spec, extra.a);
 }
 )";
 
@@ -215,6 +233,16 @@ MetalUnitMesh::MetalUnitMesh()
 	seed.materialRGB[0] = 0.75f;
 	seed.materialRGB[1] = 0.75f;
 	seed.materialRGB[2] = 0.78f;
+	seed.sunAmbient[0] = 0.35f;
+	seed.sunAmbient[1] = 0.35f;
+	seed.sunAmbient[2] = 0.35f;
+	seed.sunDiffuse[0] = 0.75f;
+	seed.sunDiffuse[1] = 0.75f;
+	seed.sunDiffuse[2] = 0.75f;
+	seed.sunSpecular[0] = 0.45f;
+	seed.sunSpecular[1] = 0.45f;
+	seed.sunSpecular[2] = 0.45f;
+	seed.sunSpecular[3] = 24.0f;
 	uniformBuffer = backend.CreateBuffer(sizeof(UBOLayout), &seed);
 	if (!uniformBuffer || !uniformBuffer->IsValid()) {
 		LOG_L(L_ERROR, "[MetalUnitMesh] uniform buffer creation failed");
@@ -324,6 +352,16 @@ void MetalUnitMesh::Draw()
 	if (skyPtr != nullptr && skyPtr->GetLight() != nullptr)
 		sunDir = skyPtr->GetLight()->GetLightDir();
 	ubo.sunDir[0] = sunDir.x; ubo.sunDir[1] = sunDir.y; ubo.sunDir[2] = sunDir.z;
+	ubo.sunAmbient[0] = sunLighting->modelAmbientColor.x;
+	ubo.sunAmbient[1] = sunLighting->modelAmbientColor.y;
+	ubo.sunAmbient[2] = sunLighting->modelAmbientColor.z;
+	ubo.sunDiffuse[0] = sunLighting->modelDiffuseColor.x;
+	ubo.sunDiffuse[1] = sunLighting->modelDiffuseColor.y;
+	ubo.sunDiffuse[2] = sunLighting->modelDiffuseColor.z;
+	ubo.sunSpecular[0] = sunLighting->modelSpecularColor.x;
+	ubo.sunSpecular[1] = sunLighting->modelSpecularColor.y;
+	ubo.sunSpecular[2] = sunLighting->modelSpecularColor.z;
+	ubo.sunSpecular[3] = sunLighting->specularExponent;
 
 	pipeline->Enable();
 
@@ -373,9 +411,9 @@ void MetalUnitMesh::Draw()
 			// pieceModelMat is the piece's transform relative to the
 			// model root, with COB animation already chained in via
 			// pieceSpaceTra updates. Combining with the unit's world
-			// transform gives the final piece-to-world matrix; same
-			// composition the GL path bakes into TransformsUploader's
-			// per-piece SSBO entry.
+			// transform gives the final piece-to-world matrix. This is
+			// the path the next transform-boundary slice will replace
+			// with common drawer-owned transform data.
 			const CMatrix44f& pieceModelMat = lmp.GetModelSpaceMatrix();
 			const CMatrix44f finalMat = worldMat * pieceModelMat;
 			std::memcpy(ubo.model, finalMat.m, sizeof(ubo.model));
@@ -396,12 +434,6 @@ void MetalUnitMesh::Draw()
 	for (const CUnit* u : active) {
 		if (u == nullptr || u->noDraw)
 			continue;
-		// Sample synced `pos` rather than `drawPos` because the Metal
-		// build skips CUnitDrawerData::UpdateDrawPos for now, so
-		// drawPos is still ZeroVector. The sim ticks on the main
-		// thread synchronously with Draw, so pos is already the
-		// "current frame" value; no interpolation smoothness to lose
-		// yet.
 		// Per-unit team colour - this is the input to the alpha-mask
 		// replacement in the FS, not a flat tint. CUnit.team ->
 		// CTeam.color is the same source of truth the GL path uses.

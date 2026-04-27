@@ -73,6 +73,14 @@ struct ListCommand {
 		Text,
 		Rect,
 		Texture,
+		BindTexture,
+		Color,
+		PushMatrix,
+		PopMatrix,
+		LoadIdentity,
+		Ortho,
+		Translate,
+		Scale,
 	};
 
 	Type type = Type::Rect;
@@ -295,7 +303,11 @@ public:
 			boundTexture = 0;
 	}
 
-	void BindTexture(int textureID) { boundTexture = textureID; }
+	void BindTexture(int textureID)
+	{
+		boundTexture = textureID;
+		RecordTextureBind(textureID);
+	}
 
 	bool BindBitmapTexture(const std::string& cacheKey, CBitmap& bitmap)
 	{
@@ -321,6 +333,7 @@ public:
 		}
 		namedTextureIDs[cacheKey] = textureID;
 		boundTexture = textureID;
+		RecordTextureBind(textureID);
 		return true;
 	}
 
@@ -368,6 +381,7 @@ public:
 		const auto existing = namedTextureIDs.find(name);
 		if (existing != namedTextureIDs.end()) {
 			boundTexture = existing->second;
+			RecordTextureBind(boundTexture);
 			return;
 		}
 
@@ -382,7 +396,11 @@ public:
 
 		BindBitmapTexture(name, bitmap);
 	}
-	void UnbindTexture() { boundTexture = 0; }
+	void UnbindTexture()
+	{
+		boundTexture = 0;
+		RecordTextureBind(0);
+	}
 	bool HasBoundTexture() const { return textures.find(boundTexture) != textures.end(); }
 
 	void RenderToTexture(int textureID, const std::function<void()>& drawFunc)
@@ -428,9 +446,15 @@ public:
 		list.clear();
 
 		const int previousList = capturingList;
+		const auto previousStack = matrixStack;
+		const auto previousColor = color;
+		const int previousTexture = boundTexture;
 		capturingList = listID;
 		drawFunc();
 		capturingList = previousList;
+		matrixStack = previousStack;
+		color = previousColor;
+		boundTexture = previousTexture;
 
 		return listID;
 	}
@@ -447,43 +471,76 @@ public:
 			return;
 
 		for (const ListCommand& command: it->second) {
-			if (command.type == ListCommand::Type::Text) {
-				DrawText(command.text);
-			} else if (command.type == ListCommand::Type::Rect) {
-				const auto previousColor = color;
-				std::copy(command.rect.color, command.rect.color + 4, color.begin());
-				DrawRect(command.rect.x1, command.rect.y1, command.rect.x2, command.rect.y2);
-				color = previousColor;
-			} else {
-				const auto previousColor = color;
-				const int previousTexture = boundTexture;
-				std::copy(command.color, command.color + 4, color.begin());
-				boundTexture = command.textureID;
-				DrawBoundTextureRectUV(command.x1, command.y1, command.x2, command.y2, command.u1, command.v1, command.u2, command.v2);
-				boundTexture = previousTexture;
-				color = previousColor;
+			switch (command.type) {
+				case ListCommand::Type::Text: {
+					DrawText(command.text);
+				} break;
+				case ListCommand::Type::Rect: {
+					const auto previousColor = color;
+					std::copy(command.rect.color, command.rect.color + 4, color.begin());
+					DrawRect(command.rect.x1, command.rect.y1, command.rect.x2, command.rect.y2);
+					color = previousColor;
+				} break;
+				case ListCommand::Type::Texture: {
+					const auto previousColor = color;
+					const int previousTexture = boundTexture;
+					std::copy(command.color, command.color + 4, color.begin());
+					if (command.textureID != 0)
+						boundTexture = command.textureID;
+					DrawBoundTextureRectUV(command.x1, command.y1, command.x2, command.y2, command.u1, command.v1, command.u2, command.v2);
+					boundTexture = previousTexture;
+					color = previousColor;
+				} break;
+				case ListCommand::Type::BindTexture: {
+					boundTexture = command.textureID;
+				} break;
+				case ListCommand::Type::Color: {
+					std::copy(command.color, command.color + 4, color.begin());
+				} break;
+				case ListCommand::Type::PushMatrix: {
+					PushMatrix();
+				} break;
+				case ListCommand::Type::PopMatrix: {
+					PopMatrix();
+				} break;
+				case ListCommand::Type::LoadIdentity: {
+					LoadIdentity();
+				} break;
+				case ListCommand::Type::Ortho: {
+					Ortho(command.x1, command.x2, command.y1, command.y2);
+				} break;
+				case ListCommand::Type::Translate: {
+					Translate(command.x1, command.y1);
+				} break;
+				case ListCommand::Type::Scale: {
+					Scale(command.x1, command.y1);
+				} break;
 			}
 		}
 	}
 
 	void PushMatrix()
 	{
+		RecordStateCommand(ListCommand::Type::PushMatrix);
 		matrixStack.push_back(CurrentMatrix());
 	}
 
 	void PopMatrix()
 	{
+		RecordStateCommand(ListCommand::Type::PopMatrix);
 		if (matrixStack.size() > 1)
 			matrixStack.pop_back();
 	}
 
 	void LoadIdentity()
 	{
+		RecordStateCommand(ListCommand::Type::LoadIdentity);
 		CurrentMatrix() = Affine2D{};
 	}
 
 	void Ortho(float left, float right, float bottom, float top)
 	{
+		RecordMatrixCommand(ListCommand::Type::Ortho, left, bottom, right, top);
 		const float width = right - left;
 		const float height = top - bottom;
 		if (width == 0.0f || height == 0.0f)
@@ -501,17 +558,25 @@ public:
 
 	void Translate(float x, float y)
 	{
+		RecordMatrixCommand(ListCommand::Type::Translate, x, y, 0.0f, 0.0f);
 		CurrentMatrix().PostTranslate(x, y);
 	}
 
 	void Scale(float x, float y)
 	{
+		RecordMatrixCommand(ListCommand::Type::Scale, x, y, 0.0f, 0.0f);
 		CurrentMatrix().PostScale(x, y);
 	}
 
 	void SetColor(float r, float g, float b, float a)
 	{
 		color = {r, g, b, a};
+		if (capturingList != 0) {
+			ListCommand command;
+			command.type = ListCommand::Type::Color;
+			std::copy(color.begin(), color.end(), command.color);
+			lists[capturingList].push_back(command);
+		}
 	}
 
 	void SetScissor(bool enabled, int x, int y, int width, int height)
@@ -582,10 +647,6 @@ public:
 
 	void DrawBoundTextureRectUV(float x1, float y1, float x2, float y2, float u1, float v1, float u2, float v2)
 	{
-		const auto it = textures.find(boundTexture);
-		if (it == textures.end())
-			return;
-
 		if (capturingList != 0) {
 			ListCommand command;
 			command.type = ListCommand::Type::Texture;
@@ -603,24 +664,66 @@ public:
 			return;
 		}
 
+		const auto it = textures.find(boundTexture);
+		if (it == textures.end())
+			return;
+
 		const auto& texture = it->second;
 		if (capturingTexture != 0) {
 			CaptureTextureRect(texture, x1, y1, x2, y2, u1, v1, u2, v2);
 			return;
 		}
 
-		DrawTextureScreen(texture, x1, y1, x2, y2, u1, v1, u2, v2);
+		const auto matrix = CurrentMatrix();
+		const auto [tx1, ty1] = matrix.Transform(x1, y1);
+		const auto [tx2, ty2] = matrix.Transform(x2, y2);
+		DrawTextureScreen(texture, tx1, ty1, tx2, ty2, u1, v1, u2, v2);
 
 		for (const CapturedText& text: texture.texts) {
 			LuaUITextDraw draw = text.draw;
-			draw.x = x1 + (text.localX / texture.desc.width) * (x2 - x1);
-			draw.y = y1 + (text.localY / texture.desc.height) * (y2 - y1);
-			draw.size = text.localSize * ((y2 - y1) / texture.desc.height);
-			DrawTextScreen(draw, x2);
+			draw.x = tx1 + (text.localX / texture.desc.width) * (tx2 - tx1);
+			draw.y = ty1 + (text.localY / texture.desc.height) * (ty2 - ty1);
+			draw.size = text.localSize * ((ty2 - ty1) / texture.desc.height);
+			DrawTextScreen(draw, tx2);
 		}
 	}
 
 private:
+	void RecordTextureBind(int textureID)
+	{
+		if (capturingList == 0)
+			return;
+
+		ListCommand command;
+		command.type = ListCommand::Type::BindTexture;
+		command.textureID = textureID;
+		lists[capturingList].push_back(command);
+	}
+
+	void RecordStateCommand(ListCommand::Type type)
+	{
+		if (capturingList == 0)
+			return;
+
+		ListCommand command;
+		command.type = type;
+		lists[capturingList].push_back(command);
+	}
+
+	void RecordMatrixCommand(ListCommand::Type type, float x1, float y1, float x2, float y2)
+	{
+		if (capturingList == 0)
+			return;
+
+		ListCommand command;
+		command.type = type;
+		command.x1 = x1;
+		command.y1 = y1;
+		command.x2 = x2;
+		command.y2 = y2;
+		lists[capturingList].push_back(command);
+	}
+
 	Affine2D& CurrentMatrix()
 	{
 		if (matrixStack.empty())

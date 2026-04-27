@@ -43,12 +43,14 @@
 #include "Rml/Components/ElementLuaTexture.h"
 #include "Rml/RmlInputReceiver.h"
 #include "Rml/SolLua/RmlSolLua.h"
+#include "Rml/SolLua/TranslationTable.h"
 #include "RmlUi_Backend.h"
 #include "RmlUi_RendererFactory.h"
 #include "Rml/SVG/SVGPlugin.h"
 
 #include "RmlUi_SystemInterface.h"
 #include "RmlUi_VFSFileInterface.h"
+#include "lib/lua/include/LuaInclude.h"
 #include "System/Input/InputHandler.h"
 #include "System/Log/ILog.h"
 
@@ -109,6 +111,147 @@ public:
 };
 
 static Rml::UniquePtr<BackendState> state;
+
+#if defined(RENDER_BACKEND_METAL)
+static TranslationTable metalLuaTranslationTable;
+
+static int MetalRmlUi_AddTranslationString(lua_State* L)
+{
+	const char* key = luaL_checkstring(L, 1);
+	const char* value = luaL_checkstring(L, 2);
+	lua_pushboolean(L, metalLuaTranslationTable.addTranslation(key, value));
+	return 1;
+}
+
+static int MetalRmlUi_ClearTranslations(lua_State*)
+{
+	metalLuaTranslationTable.clear();
+	return 0;
+}
+
+static int MetalRmlUi_ReturnFalse(lua_State* L)
+{
+	lua_pushboolean(L, false);
+	return 1;
+}
+
+static int MetalRmlUi_ReturnNil(lua_State* L)
+{
+	lua_pushnil(L);
+	return 1;
+}
+
+static void SetLuaFunction(lua_State* L, const char* name, lua_CFunction func)
+{
+	lua_pushcfunction(L, func);
+	lua_setfield(L, -2, name);
+}
+
+static void PushMetalRmlUiDocumentStub(lua_State* L)
+{
+	lua_newtable(L);
+	SetLuaFunction(L, "Show", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "Hide", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "Close", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "PullToFront", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "PushToBack", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "GetElementById", MetalRmlUi_ReturnNil);
+	SetLuaFunction(L, "QuerySelector", MetalRmlUi_ReturnNil);
+}
+
+static int MetalRmlUi_ContextLoadDocument(lua_State* L)
+{
+	(void)luaL_checkstring(L, 2);
+	PushMetalRmlUiDocumentStub(L);
+	return 1;
+}
+
+static int MetalRmlUi_ContextOpenDataModel(lua_State* L)
+{
+	(void)luaL_checkstring(L, 2);
+	lua_newtable(L);
+	return 1;
+}
+
+static void PushMetalRmlUiContextStub(lua_State* L, const char* name)
+{
+	lua_newtable(L);
+	lua_pushstring(L, name);
+	lua_setfield(L, -2, "name");
+	lua_pushnumber(L, 1.0);
+	lua_setfield(L, -2, "dp_ratio");
+	SetLuaFunction(L, "OpenDataModel", MetalRmlUi_ContextOpenDataModel);
+	SetLuaFunction(L, "RemoveDataModel", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "LoadDocument", MetalRmlUi_ContextLoadDocument);
+	SetLuaFunction(L, "CreateDocument", MetalRmlUi_ContextLoadDocument);
+	SetLuaFunction(L, "GetDocument", MetalRmlUi_ReturnNil);
+	SetLuaFunction(L, "Update", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "Render", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "UnloadDocument", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "UnloadAllDocuments", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "ProcessMouseMove", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "ProcessMouseButtonDown", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "ProcessMouseButtonUp", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "ProcessMouseWheel", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "ProcessMouseLeave", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "ProcessKeyDown", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "ProcessKeyUp", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "ProcessTextInput", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "EnableMouseCursor", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "ActivateTheme", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "IsThemeActive", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "GetElementAtPoint", MetalRmlUi_ReturnNil);
+	SetLuaFunction(L, "PullDocumentToFront", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "PushDocumentToBack", MetalRmlUi_ReturnFalse);
+}
+
+static int MetalRmlUi_CreateContext(lua_State* L)
+{
+	const char* name = luaL_checkstring(L, 1);
+	lua_getglobal(L, "RmlUi");
+	lua_getfield(L, -1, "_contexts");
+	lua_getfield(L, -1, name);
+	if (!lua_isnil(L, -1))
+		return 1;
+
+	lua_pop(L, 1);
+	PushMetalRmlUiContextStub(L, name);
+	lua_pushvalue(L, -1);
+	lua_setfield(L, -3, name);
+	return 1;
+}
+
+static int MetalRmlUi_GetContext(lua_State* L)
+{
+	const char* name = luaL_checkstring(L, 1);
+	lua_getglobal(L, "RmlUi");
+	lua_getfield(L, -1, "_contexts");
+	lua_getfield(L, -1, name);
+	return 1;
+}
+
+static void InstallMetalRmlUiLuaStub(lua_State* L)
+{
+	lua_newtable(L);
+	lua_pushstring(L, Rml::GetVersion().c_str());
+	lua_setfield(L, -2, "version");
+	lua_newtable(L);
+	lua_setfield(L, -2, "_contexts");
+
+	SetLuaFunction(L, "AddTranslationString", MetalRmlUi_AddTranslationString);
+	SetLuaFunction(L, "ClearTranslations", MetalRmlUi_ClearTranslations);
+	SetLuaFunction(L, "CreateContext", MetalRmlUi_CreateContext);
+	SetLuaFunction(L, "GetContext", MetalRmlUi_GetContext);
+	SetLuaFunction(L, "RemoveContext", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "LoadFontFace", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "RegisterEventType", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "SetMouseCursorAlias", MetalRmlUi_ReturnFalse);
+	SetLuaFunction(L, "SetDebugContext", MetalRmlUi_ReturnFalse);
+
+	lua_setglobal(L, "RmlUi");
+	LOG_L(L_INFO, "[RmlUi::InitializeLua] installed Metal Lua stub; real RmlUi renderer is still disabled");
+}
+#endif
 
 bool RmlInitialized()
 {
@@ -174,8 +317,12 @@ bool RmlGui::InitializeLua(lua_State* lua_state)
 	// Initialize) which leaves `state` unallocated. Skip the rest of this
 	// function so the LuaHandle caller sees a clean failure instead of a
 	// null-deref on `state->ls = ...` during LuaUI bootstrap.
-	if (!RmlInitialized())
+	if (!RmlInitialized()) {
+#if defined(RENDER_BACKEND_METAL)
+		InstallMetalRmlUiLuaStub(lua_state);
+#endif
 		return false;
+	}
 
 	LOG_L(L_INFO, "[RmlGui::%s] Initializing RmlUi Lua Bindings", __func__);
 

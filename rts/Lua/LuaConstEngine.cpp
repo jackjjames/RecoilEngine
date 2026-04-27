@@ -62,6 +62,10 @@ bool LuaConstEngine::PushEntries(lua_State* L)
 
 	if (!CLuaHandle::GetHandleSynced(L))
 		LuaPushNamedBool(L, "isHeadless", SpringVersion::IsHeadless());
+#if defined(RENDER_BACKEND_METAL)
+	if (!CLuaHandle::GetHandleSynced(L))
+		LuaPushNamedBool(L, "isMetal", true);
+#endif
 
 	LuaPushNamedNumber(L, "gameSpeed", GAME_SPEED);
 

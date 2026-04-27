@@ -2739,6 +2739,11 @@ int LuaUnsyncedRead::GetMapDrawMode(lua_State* L)
 		P("pathcost", "pathCost"          ),
 	};
 
+	if (infoTextureHandler == nullptr) {
+		lua_pushstring(L, "normal");
+		return 1;
+	}
+
 	const auto& mode = infoTextureHandler->GetMode();
 	const auto  iter = std::find_if(modes.begin(), modes.end(), [&mode](const P& p) { return (strcmp(p.first, mode.c_str()) == 0); });
 
@@ -2827,6 +2832,19 @@ int LuaUnsyncedRead::GetLosViewColors(lua_State* L)
 
 	const float scale = (float)CBaseGroundDrawer::losColorScale;
 	CBaseGroundDrawer* gd = readMap->GetGroundDrawer();
+	if (gd == nullptr) {
+		constexpr int alwaysColor[3] = {255, 255, 255};
+		constexpr int losColor[3]    = {128, 255, 128};
+		constexpr int radarColor[3]  = {128, 128, 255};
+		constexpr int jamColor[3]    = {255, 128, 128};
+
+		PACK_COLOR_VECTOR(alwaysColor);
+		PACK_COLOR_VECTOR(losColor);
+		PACK_COLOR_VECTOR(radarColor);
+		PACK_COLOR_VECTOR(jamColor);
+		PACK_COLOR_VECTOR(radarColor);
+		return 5;
+	}
 
 	PACK_COLOR_VECTOR(gd->alwaysColor);
 	PACK_COLOR_VECTOR(gd->losColor);

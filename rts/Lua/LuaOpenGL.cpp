@@ -290,6 +290,106 @@ void LuaOpenGL::Free()
 	occlusionQueries.clear();
 }
 
+#if defined(RENDER_BACKEND_METAL)
+namespace MetalLuaGLCompat {
+
+enum class EntryClass {
+	CommonInterface,
+	UnsupportedGL,
+};
+
+static EntryClass ClassifyEntry(const char* name)
+{
+	// Common-interface entries are not GL rendering. They expose engine
+	// state or mutate common engine-owned objects, so Metal must route
+	// them through the same implementation as GL.
+	constexpr const char* commonInterfaceEntries[] = {
+		"HasExtension",
+		"GetNumber",
+		"GetString",
+		"GetScreenViewTrans",
+		"GetViewSizes",
+		"GetViewRange",
+		"SlaveMiniMap",
+		"ConfigMiniMap",
+		"GetGlobalTexNames",
+		"GetGlobalTexCoords",
+		"GetShadowMapParams",
+		"GetAtmosphere",
+		"GetSun",
+		"GetWaterRendering",
+		"GetMapRendering",
+	};
+
+	for (const char* common: commonInterfaceEntries) {
+		if (strcmp(name, common) == 0)
+			return EntryClass::CommonInterface;
+	}
+
+	return EntryClass::UnsupportedGL;
+}
+
+static bool UsesCommonInterface(const char* name)
+{
+	return ClassifyEntry(name) == EntryClass::CommonInterface;
+}
+
+static int UnsupportedGL(lua_State*)
+{
+	// This is an API boundary, not a visual fallback: unsupported GL
+	// render/state calls are intentionally inert on Metal until they
+	// have a real backend-neutral implementation. Resource creation
+	// APIs that Lua commonly probes for capability (shaders/VBO/FBO)
+	// are not registered at all on Metal.
+	return 0;
+}
+
+} // namespace MetalLuaGLCompat
+
+static int MetalLuaFont_NoOp(lua_State*)
+{
+	return 0;
+}
+
+static int MetalLuaFont_GetTextWidth(lua_State* L)
+{
+	const char* text = luaL_optstring(L, 2, "");
+	lua_pushnumber(L, strlen(text) * 0.5f);
+	return 1;
+}
+
+static int MetalLuaFont_GetTextHeight(lua_State* L)
+{
+	lua_pushnumber(L, 1.0f);
+	return 1;
+}
+
+static int MetalLuaFont_WrapText(lua_State* L)
+{
+	lua_pushvalue(L, 2);
+	return 1;
+}
+
+static int MetalLuaGL_LoadFont(lua_State* L)
+{
+	lua_newtable(L);
+	LuaPushRawNamedCFunc(L, "Print", MetalLuaFont_NoOp);
+	LuaPushRawNamedCFunc(L, "PrintWorld", MetalLuaFont_NoOp);
+	LuaPushRawNamedCFunc(L, "Begin", MetalLuaFont_NoOp);
+	LuaPushRawNamedCFunc(L, "End", MetalLuaFont_NoOp);
+	LuaPushRawNamedCFunc(L, "SubmitBuffered", MetalLuaFont_NoOp);
+	LuaPushRawNamedCFunc(L, "WrapText", MetalLuaFont_WrapText);
+	LuaPushRawNamedCFunc(L, "GetTextWidth", MetalLuaFont_GetTextWidth);
+	LuaPushRawNamedCFunc(L, "GetTextHeight", MetalLuaFont_GetTextHeight);
+	LuaPushRawNamedCFunc(L, "SetTextColor", MetalLuaFont_NoOp);
+	LuaPushRawNamedCFunc(L, "SetOutlineColor", MetalLuaFont_NoOp);
+	LuaPushRawNamedCFunc(L, "SetAutoOutlineColor", MetalLuaFont_NoOp);
+	LuaPushRawNamedCFunc(L, "BindTexture", MetalLuaFont_NoOp);
+	return 1;
+}
+
+#endif
+
 /******************************************************************************/
 /******************************************************************************/
 
@@ -362,41 +462,23 @@ bool LuaOpenGL::PushEntries(lua_State* L)
 #undef LUA_GL_ENTRY
 #undef LUA_GL_ENTRY_IF
 
-	// Register every entry: enabled ones get their real implementation,
-	// disabled ones get a no-op stub. BAR (and many other games) load
-	// gadgets that reference legacy GL APIs at file scope - e.g.
-	// unit_seismic_ping.lua calls gl.CreateList during chunk load. If
-	// those functions aren't registered at all, the gadget errors out
-	// with "attempt to call a nil value" and takes out the entire
-	// synced LuaRules environment, which cascades to commanders never
-	// being spawned, ResourceHandler never running, etc. Registering
-	// the stub keeps the gadget loadable; its drawing calls become
-	// no-ops (which is fine because legacy immediate-mode rendering
-	// has no representation in Metal / modern GL pipelines anyway)
-	// while its game-logic callbacks (GameFrame, UnitCreated, ...)
-	// still get a chance to run.
-	//
-	// Stub semantics:
-	//   - any CreateXXX-style call returns an integer 0 so callers who
-	//     store the result into a "list / shader / query id" slot still
-	//     get a number rather than nil (common gadget pattern is
-	//     gl.CallList(list) later, which is itself stubbed).
-	//   - arguments that are functions are NOT invoked; if a gadget
-	//     had meaningful Lua-side side effects inside a gl.BeginEnd
-	//     callback that actually moves game state we'd need per-fn
-	//     special cases, but no BAR gadget currently does so. Trace
-	//     the first such regression and add a targeted hook then.
-	auto luaGLCompatNoOp = +[](lua_State* LS) -> int {
-		lua_pushinteger(LS, 0);
-		return 1;
-	};
 	for (const auto& entry: entries) {
-		if (entry.enabled)
+		bool enabled = entry.enabled;
+#if defined(RENDER_BACKEND_METAL)
+		enabled = enabled && MetalLuaGLCompat::UsesCommonInterface(entry.name);
+#endif
+		if (enabled)
 			LuaPushRawNamedCFunc(L, entry.name, entry.func);
 		else
-			LuaPushRawNamedCFunc(L, entry.name, luaGLCompatNoOp);
+			LuaPushRawNamedCFunc(L, entry.name, MetalLuaGLCompat::UnsupportedGL);
 	}
 
+#if defined(RENDER_BACKEND_METAL)
+	LuaPushRawNamedCFunc(L, "LoadFont", MetalLuaGL_LoadFont);
+	LuaPushRawNamedCFunc(L, "DeleteFont", MetalLuaGLCompat::UnsupportedGL);
+	LuaPushRawNamedCFunc(L, "AddFallbackFont", MetalLuaGLCompat::UnsupportedGL);
+	LuaPushRawNamedCFunc(L, "ClearFallbackFonts", MetalLuaGLCompat::UnsupportedGL);
+#else
 	if (caps.shaders && canUseShaders)
 		LuaShaders::PushEntries(L);
 
@@ -409,6 +491,7 @@ bool LuaOpenGL::PushEntries(lua_State* L)
 	LuaVBOs::PushEntries(L);
 
 	LuaFonts::PushEntries(L);
+#endif
 
 	return true;
 }
@@ -1185,8 +1268,17 @@ int LuaOpenGL::SlaveMiniMap(lua_State* L)
 		return 0;
 
 //	CheckDrawingEnabled(L, __func__);
+#if defined(RENDER_BACKEND_METAL)
+	// BAR LuaUI can slave the engine minimap when it intends to draw
+	// the minimap itself with gl.DrawMiniMap. Metal does not implement
+	// that draw API yet, so accepting slave mode would hide the common
+	// CMiniMap surface with no replacement. Geometry/config still flow
+	// through ConfigMiniMap below.
+	return 0;
+#else
 	minimap->SetSlaveMode(luaL_checkboolean(L, 1));
 	return 0;
+#endif
 }
 
 

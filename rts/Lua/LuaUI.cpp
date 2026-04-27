@@ -143,6 +143,12 @@ CLuaUI::CLuaUI()
 		return;
 	}
 
+#if defined(RENDER_BACKEND_METAL)
+	lua_getglobal(L, "Engine");
+		LuaPushNamedBool(L, "isMetal", true);
+	lua_pop(L, 1); // Engine
+#endif
+
 	lua_getglobal(L, "Script");
 		LuaPushNamedCFunc(L, "GetWatchExplosion",    GetWatchExplosionDef);
 		LuaPushNamedCFunc(L, "SetWatchExplosion",    SetWatchExplosionDef);

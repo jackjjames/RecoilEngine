@@ -3141,6 +3141,9 @@ int LuaUnsyncedCtrl::SetLosViewColors(lua_State* L)
 	const int scale = CBaseGroundDrawer::losColorScale;
 
 	CBaseGroundDrawer* gd = readMap->GetGroundDrawer();
+	if (gd == nullptr || infoTextureHandler == nullptr)
+		return 0;
+
 	gd->alwaysColor[0]  = (int)(scale * alwaysColor[0]);
 	gd->alwaysColor[1]  = (int)(scale * alwaysColor[1]);
 	gd->alwaysColor[2]  = (int)(scale * alwaysColor[2]);

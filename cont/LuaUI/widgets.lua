@@ -382,6 +382,19 @@ end
 
 function widgetHandler:LoadWidget(filename, fromZip)
   local basename = Basename(filename)
+  local metalIncompatibleWidgets = {
+    ['api_blueprint.lua'] = true,
+    ['gfx_los_colors.lua'] = true,
+    ['gfx_los_view.lua'] = true,
+    ['gui_advplayerslist.lua'] = true,
+    ['gui_gridmenu.lua'] = true,
+    ['gui_pip.lua'] = true,
+    ['gui_pip_minimap.lua'] = true,
+  }
+  if (Engine and Engine.isMetal and metalIncompatibleWidgets[basename]) then
+    Spring.Log(section, LOG.INFO, 'Skipping Metal-incompatible widget: ' .. basename)
+    return nil
+  end
   local text = VFS.LoadFile(filename)
   if (text == nil) then
     Spring.Log(section, LOG.ERROR, 'Failed to load: ' .. basename .. '  (missing file: ' .. filename ..')')

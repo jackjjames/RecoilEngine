@@ -531,31 +531,32 @@ static int MetalLuaGL_RenderToTexture(lua_State* L)
 {
 	const int textureID = luaL_checkint(L, 1);
 	luaL_checktype(L, 2, LUA_TFUNCTION);
-	bool clear = true;
-	int clipX = 0;
-	int clipY = 0;
-	int clipW = -1;
-	int clipH = -1;
-	int callbackArgStart = 3;
-	if (lua_isboolean(L, 3)) {
-		clear = lua_toboolean(L, 3);
-		callbackArgStart = 4;
-		if (lua_istable(L, 4)) {
-			lua_rawgeti(L, 4, 1); clipX = luaL_optint(L, -1, 0); lua_pop(L, 1);
-			lua_rawgeti(L, 4, 2); clipY = luaL_optint(L, -1, 0); lua_pop(L, 1);
-			lua_rawgeti(L, 4, 3); clipW = luaL_optint(L, -1, -1); lua_pop(L, 1);
-			lua_rawgeti(L, 4, 4); clipH = luaL_optint(L, -1, -1); lua_pop(L, 1);
-			callbackArgStart = 5;
-		}
-	}
-	const int argCount = lua_gettop(L) - callbackArgStart + 1;
+	const int argCount = lua_gettop(L) - 2;
 
-	MetalLuaUI::RenderToTexture(textureID, [L, argCount, callbackArgStart]() {
+	MetalLuaUI::RenderToTexture(textureID, [L, argCount]() {
 		lua_pushvalue(L, 2);
 		for (int arg = 0; arg < argCount; ++arg)
-			lua_pushvalue(L, callbackArgStart + arg);
+			lua_pushvalue(L, 3 + arg);
 		lua_call(L, argCount, 0);
-	}, clear, clipX, clipY, clipW, clipH);
+	});
+	return 0;
+}
+
+static int MetalLuaGL_Clear(lua_State* L)
+{
+	const int args = lua_gettop(L);
+	if ((args < 1) || !lua_isnumber(L, 1))
+		luaL_error(L, "Incorrect arguments to gl.Clear()");
+
+	const GLbitfield bits = static_cast<GLbitfield>(lua_tonumber(L, 1));
+	if ((bits & GL_COLOR_BUFFER_BIT) == 0)
+		return 0;
+
+	const float r = luaL_optnumber(L, 2, 0.0f);
+	const float g = luaL_optnumber(L, 3, 0.0f);
+	const float b = luaL_optnumber(L, 4, 0.0f);
+	const float a = luaL_optnumber(L, 5, 0.0f);
+	MetalLuaUI::Clear(r, g, b, a);
 	return 0;
 }
 
@@ -1279,6 +1280,7 @@ bool LuaOpenGL::PushEntries(lua_State* L)
 	LuaPushRawNamedCFunc(L, "EndText", MetalLuaFont_NoOp);
 	LuaPushRawNamedCFunc(L, "GetTextWidth", MetalLuaGL_GetTextWidth);
 	LuaPushRawNamedCFunc(L, "GetTextHeight", MetalLuaGL_GetTextHeight);
+	LuaPushRawNamedCFunc(L, "Clear", MetalLuaGL_Clear);
 	LuaPushRawNamedCFunc(L, "Rect", MetalLuaGL_Rect);
 	LuaPushRawNamedCFunc(L, "Color", MetalLuaGL_Color);
 	LuaPushRawNamedCFunc(L, "Scissor", MetalLuaGL_Scissor);

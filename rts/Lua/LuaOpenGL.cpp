@@ -516,7 +516,11 @@ static int MetalLuaGL_Texture(lua_State* L)
 		return 0;
 	}
 
-	if (lua_isnumber(L, 1))
+	if (lua_isnumber(L, 1) && lua_israwstring(L, 2))
+		MetalLuaUI::BindNamedTexture(lua_tostring(L, 2));
+	else if (lua_israwstring(L, 1))
+		MetalLuaUI::BindNamedTexture(lua_tostring(L, 1));
+	else if (lua_isnumber(L, 1))
 		MetalLuaUI::BindTexture(lua_toint(L, 1));
 	else
 		MetalLuaUI::UnbindTexture();
@@ -931,10 +935,14 @@ bool LuaOpenGL::PushEntries(lua_State* L)
 #if defined(RENDER_BACKEND_METAL)
 		enabled = enabled && MetalLuaGLCompat::UsesCommonInterface(entry.name);
 #endif
-		if (enabled)
+		if (enabled) {
 			LuaPushRawNamedCFunc(L, entry.name, entry.func);
-		else
+		}
+#if defined(RENDER_BACKEND_METAL)
+		else {
 			LuaPushRawNamedCFunc(L, entry.name, MetalLuaGLCompat::UnsupportedGL);
+		}
+#endif
 	}
 
 #if defined(RENDER_BACKEND_METAL)

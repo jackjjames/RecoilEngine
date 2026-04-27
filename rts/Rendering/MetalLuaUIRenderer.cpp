@@ -12,10 +12,14 @@
 #include "Rendering/MetalRenderGlobals.h"
 #include "Rendering/MetalTextOverlay.h"
 #include "Rendering/Shaders/IShaderPipeline.h"
+#include "Rendering/Textures/Bitmap.h"
+#include "Rendering/Textures/ITexture.h"
+#include "Rendering/Textures/TextureCreationParams.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -52,18 +56,12 @@ struct CapturedText {
 	float localSize = 0.0f;
 };
 
-struct CapturedRect {
-	LuaUIRectDraw draw;
-	float localX1 = 0.0f;
-	float localY1 = 0.0f;
-	float localX2 = 0.0f;
-	float localY2 = 0.0f;
-};
-
 struct TextureCommandBuffer {
 	LuaUITextureDesc desc;
+	std::unique_ptr<ITexture> texture;
+	std::vector<uint32_t> pixels;
 	std::vector<CapturedText> texts;
-	std::vector<CapturedRect> rects;
+	bool dirty = false;
 };
 
 struct ListCommand {
@@ -82,6 +80,14 @@ struct RectVertex {
 	float color[4];
 };
 
+struct TextureVertex {
+	float pos[2];
+	float uv[2];
+	float color[4];
+};
+
+constexpr uint32_t kGL_RGBA8 = 0x8058;
+
 constexpr const char* kRectVertexGlsl = R"(#version 450
 layout(location = 0) in vec2 aPos;
 layout(location = 1) in vec4 aColor;
@@ -97,6 +103,29 @@ layout(location = 0) in vec4 vColor;
 layout(location = 0) out vec4 fragColor;
 void main() {
     fragColor = vColor;
+}
+)";
+
+constexpr const char* kTextureVertexGlsl = R"(#version 450
+layout(location = 0) in vec2 aPos;
+layout(location = 1) in vec2 aUV;
+layout(location = 2) in vec4 aColor;
+layout(location = 0) out vec2 vUV;
+layout(location = 1) out vec4 vColor;
+void main() {
+    vUV = aUV;
+    vColor = aColor;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)";
+
+constexpr const char* kTextureFragmentGlsl = R"(#version 450
+layout(location = 0) in vec2 vUV;
+layout(location = 1) in vec4 vColor;
+layout(location = 0) out vec4 fragColor;
+layout(set = 0, binding = 0) uniform sampler2D uTex;
+void main() {
+    fragColor = texture(uTex, vUV) * vColor;
 }
 )";
 
@@ -137,26 +166,47 @@ public:
 		if (!rectVertexBuffer || !rectVertexBuffer->IsValid())
 			return;
 
-		PipelineDesc pd;
-		pd.name = "lua_ui_rect";
-		pd.vertexSource = kRectVertexGlsl;
-		pd.fragmentSource = kRectFragmentGlsl;
-		pd.vertexAttributes = {
+		textureVertexBuffer = backend.CreateBuffer(6 * sizeof(TextureVertex), nullptr);
+		if (!textureVertexBuffer || !textureVertexBuffer->IsValid())
+			return;
+
+		PipelineDesc rectDesc;
+		rectDesc.name = "lua_ui_rect";
+		rectDesc.vertexSource = kRectVertexGlsl;
+		rectDesc.fragmentSource = kRectFragmentGlsl;
+		rectDesc.vertexAttributes = {
 			VertexAttribute{ .location = 0, .bufferSlot = 0, .offset = 0, .format = VertexFormat::Float2 },
 			VertexAttribute{ .location = 1, .bufferSlot = 0, .offset = sizeof(float) * 2, .format = VertexFormat::Float4 },
 		};
-		pd.vertexBindings = {
+		rectDesc.vertexBindings = {
 			VertexBindingLayout{ .slot = 0, .stride = sizeof(RectVertex) },
 		};
-		pd.blendState = RenderTargetBlendState{
+		rectDesc.blendState = RenderTargetBlendState{
 			.enabled = true,
 			.srcColor = GL_SRC_ALPHA,
 			.dstColor = GL_ONE_MINUS_SRC_ALPHA,
 			.srcAlpha = GL_ONE,
 			.dstAlpha = GL_ONE_MINUS_SRC_ALPHA,
 		};
-		pipeline = backend.CreatePipeline(pd);
-		valid = pipeline && pipeline->IsValid();
+		rectPipeline = backend.CreatePipeline(rectDesc);
+		if (!rectPipeline || !rectPipeline->IsValid())
+			return;
+
+		PipelineDesc textureDesc;
+		textureDesc.name = "lua_ui_texture";
+		textureDesc.vertexSource = kTextureVertexGlsl;
+		textureDesc.fragmentSource = kTextureFragmentGlsl;
+		textureDesc.vertexAttributes = {
+			VertexAttribute{ .location = 0, .bufferSlot = 0, .offset = 0, .format = VertexFormat::Float2 },
+			VertexAttribute{ .location = 1, .bufferSlot = 0, .offset = sizeof(float) * 2, .format = VertexFormat::Float2 },
+			VertexAttribute{ .location = 2, .bufferSlot = 0, .offset = sizeof(float) * 4, .format = VertexFormat::Float4 },
+		};
+		textureDesc.vertexBindings = {
+			VertexBindingLayout{ .slot = 0, .stride = sizeof(TextureVertex) },
+		};
+		textureDesc.blendState = rectDesc.blendState;
+		texturePipeline = backend.CreatePipeline(textureDesc);
+		valid = texturePipeline && texturePipeline->IsValid();
 	}
 
 	void Kill()
@@ -168,9 +218,12 @@ public:
 		boundTexture = 0;
 		nextTextureID = 1;
 		nextListID = 1;
+		namedTextureIDs.clear();
 		scissorEnabled = false;
 		blendEnabled = true;
-		pipeline.reset();
+		texturePipeline.reset();
+		rectPipeline.reset();
+		textureVertexBuffer.reset();
 		rectVertexBuffer.reset();
 		textOverlay.reset();
 		valid = false;
@@ -188,6 +241,17 @@ public:
 		auto& texture = textures[textureID];
 		texture.desc.width = std::max(1, width);
 		texture.desc.height = std::max(1, height);
+		texture.pixels.resize(texture.desc.width * texture.desc.height, 0);
+		texture.dirty = true;
+
+		GL::TextureCreationParams tcp;
+		tcp.linearTextureFilter = true;
+		tcp.linearMipMapFilter = false;
+		tcp.reqNumLevels = 1;
+		texture.texture = globalRendering->renderBackend->CreateTexture2D(
+			int2(texture.desc.width, texture.desc.height), kGL_RGBA8, tcp, false);
+		if (texture.texture != nullptr && texture.texture->IsValid())
+			texture.texture->UploadImage(texture.pixels.data());
 		return textureID;
 	}
 
@@ -199,6 +263,44 @@ public:
 	}
 
 	void BindTexture(int textureID) { boundTexture = textureID; }
+	void BindNamedTexture(const std::string& name)
+	{
+		if (name.empty()) {
+			UnbindTexture();
+			return;
+		}
+
+		const auto existing = namedTextureIDs.find(name);
+		if (existing != namedTextureIDs.end()) {
+			boundTexture = existing->second;
+			return;
+		}
+
+		CBitmap bitmap;
+		if (!bitmap.Load(name)) {
+			UnbindTexture();
+			return;
+		}
+
+		GL::TextureCreationParams tcp;
+		tcp.linearTextureFilter = true;
+		tcp.linearMipMapFilter = false;
+		tcp.reqNumLevels = 1;
+
+		auto textureHandle = bitmap.CreateTextureHandle(tcp);
+		if (textureHandle == nullptr || !textureHandle->IsValid()) {
+			UnbindTexture();
+			return;
+		}
+
+		const int textureID = nextTextureID++;
+		auto& texture = textures[textureID];
+		texture.desc.width = std::max(1, bitmap.xsize);
+		texture.desc.height = std::max(1, bitmap.ysize);
+		texture.texture = std::move(textureHandle);
+		namedTextureIDs[name] = textureID;
+		boundTexture = textureID;
+	}
 	void UnbindTexture() { boundTexture = 0; }
 
 	void RenderToTexture(int textureID, const std::function<void()>& drawFunc)
@@ -207,8 +309,9 @@ public:
 		if (it == textures.end())
 			return;
 
+		std::fill(it->second.pixels.begin(), it->second.pixels.end(), 0);
 		it->second.texts.clear();
-		it->second.rects.clear();
+		it->second.dirty = true;
 
 		const int previousCapture = capturingTexture;
 		const auto previousStack = matrixStack;
@@ -354,14 +457,7 @@ public:
 
 		const auto& texture = it->second;
 
-		for (const CapturedRect& rect: texture.rects) {
-			LuaUIRectDraw draw = rect.draw;
-			draw.x1 = x1 + (rect.localX1 / texture.desc.width) * (x2 - x1);
-			draw.y1 = y1 + (rect.localY1 / texture.desc.height) * (y2 - y1);
-			draw.x2 = x1 + (rect.localX2 / texture.desc.width) * (x2 - x1);
-			draw.y2 = y1 + (rect.localY2 / texture.desc.height) * (y2 - y1);
-			DrawRectScreen(draw);
-		}
+		DrawTextureScreen(texture, x1, y1, x2, y2);
 
 		for (const CapturedText& text: texture.texts) {
 			LuaUITextDraw draw = text.draw;
@@ -425,13 +521,41 @@ private:
 		const auto [localX1, localY1] = ClipToTextureLocal(clipX1, clipY1, it->second.desc);
 		const auto [localX2, localY2] = ClipToTextureLocal(clipX2, clipY2, it->second.desc);
 
-		CapturedRect captured;
-		captured.draw = rect;
-		captured.localX1 = localX1;
-		captured.localY1 = localY1;
-		captured.localX2 = localX2;
-		captured.localY2 = localY2;
-		it->second.rects.push_back(std::move(captured));
+		RasterizeRect(it->second, rect, localX1, localY1, localX2, localY2);
+	}
+
+	static uint32_t PackColor(const float* color)
+	{
+		const auto clampByte = [](float v) {
+			return uint32_t(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+		};
+
+		const uint32_t r = clampByte(color[0]);
+		const uint32_t g = clampByte(color[1]);
+		const uint32_t b = clampByte(color[2]);
+		const uint32_t a = clampByte(color[3]);
+		return r | (g << 8) | (b << 16) | (a << 24);
+	}
+
+	void RasterizeRect(TextureCommandBuffer& texture, const LuaUIRectDraw& rect,
+	                  float localX1, float localY1, float localX2, float localY2)
+	{
+		if (texture.pixels.empty())
+			return;
+
+		const int x0 = std::clamp(int(std::floor(std::min(localX1, localX2))), 0, texture.desc.width);
+		const int x1 = std::clamp(int(std::ceil (std::max(localX1, localX2))), 0, texture.desc.width);
+		const int y0 = std::clamp(int(std::floor(std::min(localY1, localY2))), 0, texture.desc.height);
+		const int y1 = std::clamp(int(std::ceil (std::max(localY1, localY2))), 0, texture.desc.height);
+		if (x0 >= x1 || y0 >= y1)
+			return;
+
+		const uint32_t packed = PackColor(rect.color);
+		for (int y = y0; y < y1; ++y) {
+			uint32_t* row = texture.pixels.data() + y * texture.desc.width;
+			std::fill(row + x0, row + x1, packed);
+		}
+		texture.dirty = true;
 	}
 
 	void DrawTextScreen(const LuaUITextDraw& draw, float maxX)
@@ -499,10 +623,47 @@ private:
 		};
 
 		rectVertexBuffer->UpdateData(verts, sizeof(verts), 0);
-		pipeline->Enable();
-		pipeline->BindVertexBuffer(0, *rectVertexBuffer);
-		pipeline->Draw(PrimitiveTopology::Triangles, 0, 6);
-		pipeline->Disable();
+		rectPipeline->Enable();
+		rectPipeline->BindVertexBuffer(0, *rectVertexBuffer);
+		rectPipeline->Draw(PrimitiveTopology::Triangles, 0, 6);
+		rectPipeline->Disable();
+	}
+
+	void DrawTextureScreen(const TextureCommandBuffer& texture, float x1, float y1, float x2, float y2)
+	{
+		if (!valid || globalRendering == nullptr || texture.texture == nullptr || !texture.texture->IsValid())
+			return;
+		if (!ApplyScissor())
+			return;
+
+		if (texture.dirty)
+			texture.texture->UploadImage(texture.pixels.data());
+
+		const float viewSizeX = std::max(1.0f, float(globalRendering->viewSizeX));
+		const float viewSizeY = std::max(1.0f, float(globalRendering->viewSizeY));
+		const auto ndc = [&](float x, float y) {
+			return std::pair<float, float>{x / viewSizeX * 2.0f - 1.0f, y / viewSizeY * 2.0f - 1.0f};
+		};
+
+		const auto [nx0, ny0] = ndc(x1, y1);
+		const auto [nx1, ny1] = ndc(x2, y2);
+		const float alpha = blendEnabled ? color[3] : 1.0f;
+		const float tint[4] = {color[0], color[1], color[2], alpha};
+		TextureVertex verts[6] = {
+			{{nx0, ny0}, {0.0f, 1.0f}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx1, ny0}, {1.0f, 1.0f}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx0, ny1}, {0.0f, 0.0f}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx0, ny1}, {0.0f, 0.0f}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx1, ny0}, {1.0f, 1.0f}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx1, ny1}, {1.0f, 0.0f}, {tint[0], tint[1], tint[2], tint[3]}},
+		};
+
+		textureVertexBuffer->UpdateData(verts, sizeof(verts), 0);
+		texturePipeline->Enable();
+		texturePipeline->BindTexture(0, *texture.texture);
+		texturePipeline->BindVertexBuffer(0, *textureVertexBuffer);
+		texturePipeline->Draw(PrimitiveTopology::Triangles, 0, 6);
+		texturePipeline->Disable();
 	}
 
 	bool ApplyScissor() const
@@ -533,9 +694,12 @@ private:
 	}
 
 	std::unique_ptr<MetalTextOverlay> textOverlay;
-	std::unique_ptr<IShaderPipeline> pipeline;
+	std::unique_ptr<IShaderPipeline> rectPipeline;
+	std::unique_ptr<IShaderPipeline> texturePipeline;
 	std::unique_ptr<IBuffer> rectVertexBuffer;
+	std::unique_ptr<IBuffer> textureVertexBuffer;
 	std::unordered_map<int, TextureCommandBuffer> textures;
+	std::unordered_map<std::string, int> namedTextureIDs;
 	std::unordered_map<int, std::vector<ListCommand>> lists;
 	std::vector<Affine2D> matrixStack;
 	std::array<float, 4> color = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -569,6 +733,7 @@ namespace MetalLuaUI
 	int CreateTexture(int width, int height) { return GetRenderer().CreateTexture(width, height); }
 	void DeleteTexture(int textureID) { GetRenderer().DeleteTexture(textureID); }
 	void BindTexture(int textureID) { GetRenderer().BindTexture(textureID); }
+	void BindNamedTexture(const std::string& name) { GetRenderer().BindNamedTexture(name); }
 	void UnbindTexture() { GetRenderer().UnbindTexture(); }
 	void RenderToTexture(int textureID, const std::function<void()>& drawFunc) { GetRenderer().RenderToTexture(textureID, drawFunc); }
 	int CreateList(const std::function<void()>& drawFunc) { return GetRenderer().CreateList(drawFunc); }

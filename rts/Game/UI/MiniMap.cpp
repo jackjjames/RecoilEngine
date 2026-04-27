@@ -1030,9 +1030,11 @@ std::string CMiniMap::GetTooltip(int x, int y)
 			return "Minimize map";
 	}
 
-	const std::string buildTip = guihandler->GetBuildTooltip();
-	if (!buildTip.empty())
-		return buildTip;
+	if (guihandler != nullptr) {
+		const std::string buildTip = guihandler->GetBuildTooltip();
+		if (!buildTip.empty())
+			return buildTip;
+	}
 
 	const float3 wpos = GetMapPosition(x, y);
 	const CUnit* unit = GetSelectUnit(wpos);

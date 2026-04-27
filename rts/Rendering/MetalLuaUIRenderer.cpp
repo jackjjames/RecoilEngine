@@ -15,12 +15,16 @@
 #include "Rendering/Textures/Bitmap.h"
 #include "Rendering/Textures/ITexture.h"
 #include "Rendering/Textures/TextureCreationParams.hpp"
+#include "Sim/Units/UnitDef.h"
+#include "Sim/Units/UnitDefHandler.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -158,6 +162,24 @@ std::string StripColorCodes(const std::string& text)
 	return stripped;
 }
 
+std::string NormalizeNamedTexturePath(const std::string& name)
+{
+	if (name.size() < 3 || name[0] != ':')
+		return name;
+
+	size_t secondColon = name.find(':', 1);
+	if (secondColon == std::string::npos)
+		return name;
+
+	// Lua texture names can start with sampler hints like :n:, :l:, :g: or
+	// tint hints like :lt0.3,0.3,0.3:. They are GL sampling/state requests;
+	// the Metal LuaUI fallback only needs the underlying VFS path.
+	if (secondColon + 1 < name.size())
+		return name.substr(secondColon + 1);
+
+	return {};
+}
+
 class Renderer
 {
 public:
@@ -274,25 +296,9 @@ public:
 	}
 
 	void BindTexture(int textureID) { boundTexture = textureID; }
-	void BindNamedTexture(const std::string& name)
+
+	bool BindBitmapTexture(const std::string& cacheKey, CBitmap& bitmap)
 	{
-		if (name.empty()) {
-			UnbindTexture();
-			return;
-		}
-
-		const auto existing = namedTextureIDs.find(name);
-		if (existing != namedTextureIDs.end()) {
-			boundTexture = existing->second;
-			return;
-		}
-
-		CBitmap bitmap;
-		if (!bitmap.Load(name)) {
-			UnbindTexture();
-			return;
-		}
-
 		GL::TextureCreationParams tcp;
 		tcp.linearTextureFilter = true;
 		tcp.linearMipMapFilter = false;
@@ -301,7 +307,7 @@ public:
 		auto textureHandle = bitmap.CreateTextureHandle(tcp);
 		if (textureHandle == nullptr || !textureHandle->IsValid()) {
 			UnbindTexture();
-			return;
+			return false;
 		}
 
 		const int textureID = nextTextureID++;
@@ -313,8 +319,68 @@ public:
 			texture.pixels.resize(texture.desc.width * texture.desc.height);
 			std::copy_n(reinterpret_cast<const uint32_t*>(bitmapPixels), texture.pixels.size(), texture.pixels.begin());
 		}
-		namedTextureIDs[name] = textureID;
+		namedTextureIDs[cacheKey] = textureID;
 		boundTexture = textureID;
+		return true;
+	}
+
+	bool BindUnitDefBuildPic(const std::string& name)
+	{
+		if (name.size() < 2 || name[0] != '#' || unitDefHandler == nullptr)
+			return false;
+
+		char* endPtr = nullptr;
+		const int unitDefID = static_cast<int>(std::strtol(name.c_str() + 1, &endPtr, 10));
+		if (endPtr == name.c_str() + 1)
+			return false;
+
+		const UnitDef* unitDef = unitDefHandler->GetUnitDefByID(unitDefID);
+		if (unitDef == nullptr)
+			return false;
+
+		CBitmap bitmap;
+		if (!unitDef->buildPicName.empty()) {
+			if (!bitmap.Load("unitpics/" + unitDef->buildPicName))
+				return false;
+		} else if (!bitmap.Load("unitpics/" + unitDef->name + ".dds") &&
+		           !bitmap.Load("unitpics/" + unitDef->name + ".png") &&
+		           !bitmap.Load("unitpics/" + unitDef->name + ".pcx") &&
+		           !bitmap.Load("unitpics/" + unitDef->name + ".bmp")) {
+			return false;
+		}
+
+		return BindBitmapTexture(name, bitmap);
+	}
+
+	void BindNamedTexture(const std::string& name)
+	{
+		if (name.empty()) {
+			UnbindTexture();
+			return;
+		}
+
+		const std::string texturePath = NormalizeNamedTexturePath(name);
+		if (texturePath.empty()) {
+			UnbindTexture();
+			return;
+		}
+
+		const auto existing = namedTextureIDs.find(name);
+		if (existing != namedTextureIDs.end()) {
+			boundTexture = existing->second;
+			return;
+		}
+
+		if (BindUnitDefBuildPic(name))
+			return;
+
+		CBitmap bitmap;
+		if (!bitmap.Load(texturePath)) {
+			UnbindTexture();
+			return;
+		}
+
+		BindBitmapTexture(name, bitmap);
 	}
 	void UnbindTexture() { boundTexture = 0; }
 	bool HasBoundTexture() const { return textures.find(boundTexture) != textures.end(); }

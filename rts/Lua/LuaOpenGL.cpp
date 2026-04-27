@@ -794,7 +794,8 @@ static int MetalLuaGL_BeginEnd(lua_State* L)
 	// Always run the user's function so Lua-side state (gl.Color, gl.Texture, etc.) is observed,
 	// but only collect vertices when there is a capture target and a supported primitive.
 	const bool capture = MetalLuaGL_ShouldCaptureImmediate()
-		&& (primMode == GL_QUADS || primMode == GL_TRIANGLES || primMode == GL_TRIANGLE_FAN);
+		&& (primMode == GL_QUADS || primMode == GL_TRIANGLES
+		    || primMode == GL_TRIANGLE_FAN || primMode == GL_TRIANGLE_STRIP);
 	const bool previousCapturing = MetalLuaImmediateCapturing();
 	MetalLuaImmediateCapturing() = capture;
 	lua_pushvalue(L, 2);
@@ -817,6 +818,15 @@ static int MetalLuaGL_BeginEnd(lua_State* L)
 	} else if (primMode == GL_TRIANGLE_FAN && vertices.size() >= 3) {
 		for (size_t i = 1; i + 1 < vertices.size(); ++i)
 			MetalLuaGL_DrawCapturedTriangle(vertices, 0, i, i + 1);
+	} else if (primMode == GL_TRIANGLE_STRIP && vertices.size() >= 3) {
+		// Each successive triangle shares the previous edge; alternate winding
+		// (i, i+1, i+2) / (i+1, i, i+2) so the rasterizer sees consistent CCW.
+		for (size_t i = 0; i + 2 < vertices.size(); ++i) {
+			if ((i & 1) == 0)
+				MetalLuaGL_DrawCapturedTriangle(vertices, i, i + 1, i + 2);
+			else
+				MetalLuaGL_DrawCapturedTriangle(vertices, i + 1, i, i + 2);
+		}
 	}
 	return 0;
 }
@@ -910,6 +920,13 @@ static int MetalLuaGL_Shape(lua_State* L)
 	} else if (primMode == GL_TRIANGLE_FAN && vertices.size() >= 3) {
 		for (size_t i = 1; i + 1 < vertices.size(); ++i)
 			MetalLuaGL_DrawCapturedTriangle(vertices, 0, i, i + 1);
+	} else if (primMode == GL_TRIANGLE_STRIP && vertices.size() >= 3) {
+		for (size_t i = 0; i + 2 < vertices.size(); ++i) {
+			if ((i & 1) == 0)
+				MetalLuaGL_DrawCapturedTriangle(vertices, i, i + 1, i + 2);
+			else
+				MetalLuaGL_DrawCapturedTriangle(vertices, i + 1, i, i + 2);
+		}
 	}
 	return 0;
 }

@@ -4,6 +4,7 @@
 
 #if defined(RENDER_BACKEND_METAL)
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -31,6 +32,8 @@ public:
 
 	bool IsValid() const { return valid; }
 
+	void BeginFrame();
+
 	// Draw a single line of text starting at NDC (x, y) — top-left origin.
 	// ndcGlyphH is the desired glyph cell height in NDC units. If the full
 	// string would extend past `ndcMaxX` at that height, glyphs are
@@ -49,8 +52,10 @@ public:
 private:
 	std::unique_ptr<IShaderPipeline> pipeline;
 	std::unique_ptr<ITexture>        atlas;
-	std::unique_ptr<IBuffer>         vertexBuffer;
-	size_t                           vertexBufferCapacityBytes = 0;
+	std::array<std::unique_ptr<IBuffer>, 3> vertexBuffers;
+	std::array<size_t, 3>                   vertexBufferCapacityBytes = {};
+	size_t                                  activeVertexBuffer = 0;
+	size_t                                  vertexBufferOffsetBytes = 0;
 
 	// Per-line scratch. Reused so DrawLine does not allocate per frame.
 	std::vector<TextVertex>          vertsScratch;

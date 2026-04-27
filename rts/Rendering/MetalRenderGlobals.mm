@@ -2,6 +2,8 @@
 
 #include "Rendering/MetalRenderGlobals.h"
 
+#import <Metal/Metal.h>
+
 #include <array>
 
 namespace MetalGlobals {
@@ -33,6 +35,20 @@ void* GetLayer() { return g_layer; }
 
 void SetCurrentEncoder(void* encoder) { g_currentEncoder = encoder; }
 void* GetCurrentEncoder() { return g_currentEncoder; }
+
+void SetCurrentScissorRect(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+{
+	auto encoder = (__bridge id<MTLRenderCommandEncoder>)g_currentEncoder;
+	if (encoder == nil)
+		return;
+
+	MTLScissorRect rect;
+	rect.x = x;
+	rect.y = y;
+	rect.width = width;
+	rect.height = height;
+	[encoder setScissorRect:rect];
+}
 
 void SetUniformBinding(uint32_t slot, const BufferBinding& binding)
 {

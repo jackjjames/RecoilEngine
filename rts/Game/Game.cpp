@@ -4,6 +4,7 @@
 
 #include <Rml/Backends/RmlUi_Backend.h>
 #include <RmlUi/Core.h>
+
 #include "Game.h"
 #include "Camera.h"
 #include "CameraHandler.h"
@@ -58,8 +59,9 @@
 #include "Rendering/MetalBuildHalo.h"
 #include "Rendering/MetalNanoBeams.h"
 #include "Rendering/MetalRangeRings.h"
+#include "Rendering/MetalLuaUIRenderer.h"
+#include "Rendering/MetalModelData.h"
 #include "Rendering/MetalSplashRenderer.h"
-#include "Rendering/MetalTextOverlay.h"
 #include "Rendering/MetalProjectiles.h"
 #include "Rendering/MetalUnitMesh.h"
 #include "Rendering/MetalUnitShadows.h"
@@ -1038,6 +1040,9 @@ void CGame::KillRendering()
 {
 	RECOIL_DETAILED_TRACY_ZONE;
 	LOG("[Game::%s][1]", __func__);
+#if defined(RENDER_BACKEND_METAL)
+	MetalLuaUI::Kill();
+#endif
 	icon::iconHandler.Kill();
 	spring::SafeDelete(geometricObjects);
 	worldDrawer.Kill();
@@ -1293,9 +1298,7 @@ bool CGame::UpdateUnsynced(const spring_time currentTime)
 	}
 
 	const bool newSimFrame = (lastSimFrame != gs->frameNum);
-	numDrawFrames++;
-	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
-	globalRendering->lastFrameStart = currentTime;
+	UpdateDrawFrameAccounting(currentTime, true);
 	// Update the interpolation coefficient (globalRendering->timeOffset)
 	if (!gs->paused && !IsSimLagging() && !gs->PreSimFrame() && !videoCapturing->AllowRecord()) {
 		globalRendering->weightedSpeedFactor = 0.001f * gu->simFPS;
@@ -1379,15 +1382,6 @@ bool CGame::UpdateUnsynced(const spring_time currentTime)
 		lastFrameTime = currentTime;
 	}
 
-	if ((currentTime - frameStartTime).toMilliSecsf() >= 1000.0f) {
-		globalRendering->FPS = (numDrawFrames * 1000.0f) / std::max(0.01f, (currentTime - frameStartTime).toMilliSecsf());
-
-		// update draw-FPS counter once every second
-		frameStartTime = currentTime;
-		numDrawFrames = 0;
-
-	}
-
 	const bool forceUpdate = (unsyncedUpdateDeltaTime >= INV_GAME_SPEED);
 
 	lastSimFrame = gs->frameNum;
@@ -1464,6 +1458,22 @@ bool CGame::UpdateUnsynced(const spring_time currentTime)
 	return false;
 }
 
+void CGame::UpdateDrawFrameAccounting(const spring_time currentTime, bool updateLastFrameStart)
+{
+	numDrawFrames++;
+	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
+	if (updateLastFrameStart)
+		globalRendering->lastFrameStart = currentTime;
+
+	if ((currentTime - frameStartTime).toMilliSecsf() < 1000.0f)
+		return;
+
+	globalRendering->FPS = (numDrawFrames * 1000.0f) / std::max(0.01f, (currentTime - frameStartTime).toMilliSecsf());
+
+	// update draw-FPS counter once per second
+	frameStartTime = currentTime;
+	numDrawFrames = 0;
+}
 
 bool CGame::Draw() {
 #if defined(RENDER_BACKEND_METAL)
@@ -1506,7 +1516,6 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalNanoBeams>    metalNanoBeams;
 	static std::unique_ptr<MetalRangeRings>   metalRangeRings;
 	static MetalSplashRenderer                loadTile;
-	static MetalTextOverlay                   textOverlay;
 
 	if (metalWorldDrawer == nullptr)
 		metalWorldDrawer = std::make_unique<MetalWorldDrawer>();
@@ -1539,8 +1548,7 @@ bool CGame::Draw() {
 	if (metalRangeRings == nullptr)
 		metalRangeRings = std::make_unique<MetalRangeRings>();
 
-	globalRendering->drawFrame = std::max(1U, globalRendering->drawFrame + 1);
-	globalRendering->lastFrameStart = spring_gettime();
+	UpdateDrawFrameAccounting(spring_gettime(), false);
 
 	SetDrawMode(gameNormalDraw);
 
@@ -1555,6 +1563,8 @@ bool CGame::Draw() {
 
 	if (camera != nullptr)
 		camera->Update();
+
+	MetalModelData::Update();
 
 	// Sky first: gl_Position.z = 1 keeps it behind everything and the
 	// fullscreen triangle fills pixels the terrain doesn't cover. The
@@ -1664,6 +1674,27 @@ bool CGame::Draw() {
 	// layout instead of maintaining a separate HUD placement.
 	if (metalMinimap && metalMinimap->IsValid())
 		metalMinimap->Draw();
+
+	// Run LuaUI's normal screen pass so game-owned HUD widgets can consume
+	// shared engine state such as Spring.GetFPS(). Avoid the global event
+	// handler here because several non-Lua DrawScreen listeners still assume GL.
+	if (luaUI != nullptr) {
+		static bool metalLuaUIViewResized = false;
+		MetalLuaUI::Init();
+		MetalLuaUI::BeginFrame();
+		if (!metalLuaUIViewResized) {
+			luaUI->ViewResize();
+			metalLuaUIViewResized = true;
+		}
+
+		const float previousUpdateDeltaSeconds = updateDeltaSeconds;
+		const float drawUpdateDeltaSeconds = std::max(0.0f, (spring_gettime() - lastDrawFrameTime).toSecsf());
+		if (updateDeltaSeconds <= 0.0f && drawUpdateDeltaSeconds > 0.0f)
+			updateDeltaSeconds = drawUpdateDeltaSeconds;
+		luaUI->Update();
+		updateDeltaSeconds = previousUpdateDeltaSeconds;
+		luaUI->DrawScreen();
+	}
 
 	SetDrawMode(gameNotDrawing);
 	lastDrawFrameTime = spring_gettime();

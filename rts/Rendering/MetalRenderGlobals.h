@@ -35,6 +35,8 @@ void* GetLayer();
 void SetCurrentEncoder(void* encoder);
 void* GetCurrentEncoder();
 
+void SetCurrentScissorRect(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+
 // Pending uniform-buffer bindings accumulate on the context so draw calls can
 // replay them onto the encoder once a pipeline is in flight. We keep this in a
 // fixed-size array because Metal's vertex+fragment buffer slots both max out at

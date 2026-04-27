@@ -13,6 +13,7 @@
 #include "System/Log/ILog.h"
 #include "System/type2.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstring>
@@ -182,14 +183,16 @@ MetalTextOverlay::MetalTextOverlay()
 		return;
 	atlas->UploadImage(pixels.data());
 
-	// --- Vertex buffer (dynamic, 6 verts per glyph). 256 glyphs is more
-	// than enough for any single load-progress line; grows on demand in
-	// DrawLine if somehow exceeded.
-	constexpr size_t kInitialGlyphCap = 256;
-	vertexBufferCapacityBytes = kInitialGlyphCap * 6 * sizeof(TextVertex);
-	vertexBuffer = backend.CreateBuffer(vertexBufferCapacityBytes, nullptr);
-	if (!vertexBuffer || !vertexBuffer->IsValid())
-		return;
+	// --- Vertex buffers (dynamic, 6 verts per glyph). Rotate between a few
+	// frame slots and append per draw so command-buffered Metal draws do not
+	// observe later text uploads into the same byte range.
+	constexpr size_t kInitialGlyphCap = 4096;
+	for (size_t i = 0; i < vertexBuffers.size(); ++i) {
+		vertexBufferCapacityBytes[i] = kInitialGlyphCap * 6 * sizeof(TextVertex);
+		vertexBuffers[i] = backend.CreateBuffer(vertexBufferCapacityBytes[i], nullptr);
+		if (!vertexBuffers[i] || !vertexBuffers[i]->IsValid())
+			return;
+	}
 
 	// --- Pipeline. Interleaved vec2 pos + vec2 uv, same layout as the
 	// splash quad so the shader translator + Metal pipeline cache treat
@@ -216,6 +219,13 @@ MetalTextOverlay::MetalTextOverlay()
 }
 
 MetalTextOverlay::~MetalTextOverlay() = default;
+
+
+void MetalTextOverlay::BeginFrame()
+{
+	activeVertexBuffer = (activeVertexBuffer + 1) % vertexBuffers.size();
+	vertexBufferOffsetBytes = 0;
+}
 
 
 void MetalTextOverlay::DrawLine(float ndcX, float ndcY, float ndcGlyphH, const std::string& text,
@@ -302,18 +312,21 @@ void MetalTextOverlay::DrawLine(float ndcX, float ndcY, float ndcGlyphH, const s
 		return;
 
 	const size_t bytes = vertsScratch.size() * sizeof(TextVertex);
-	if (bytes > vertexBufferCapacityBytes) {
-		// Grow the buffer. Rare; load-progress lines are short.
+	if (vertexBufferOffsetBytes + bytes > vertexBufferCapacityBytes[activeVertexBuffer]) {
 		auto& backend = *globalRendering->renderBackend;
-		vertexBufferCapacityBytes = bytes * 2;
-		vertexBuffer = backend.CreateBuffer(vertexBufferCapacityBytes, nullptr);
-		if (!vertexBuffer || !vertexBuffer->IsValid())
+		vertexBufferCapacityBytes[activeVertexBuffer] = std::max(vertexBufferCapacityBytes[activeVertexBuffer] * 2, bytes * 2);
+		vertexBuffers[activeVertexBuffer] = backend.CreateBuffer(vertexBufferCapacityBytes[activeVertexBuffer], nullptr);
+		if (!vertexBuffers[activeVertexBuffer] || !vertexBuffers[activeVertexBuffer]->IsValid())
 			return;
+		vertexBufferOffsetBytes = 0;
 	}
-	vertexBuffer->UpdateData(vertsScratch.data(), bytes, 0);
+
+	const size_t drawOffset = vertexBufferOffsetBytes;
+	vertexBuffers[activeVertexBuffer]->UpdateData(vertsScratch.data(), bytes, drawOffset);
+	vertexBufferOffsetBytes += bytes;
 
 	pipeline->Enable();
-	pipeline->BindVertexBuffer(0, *vertexBuffer);
+	pipeline->BindVertexBuffer(0, *vertexBuffers[activeVertexBuffer], drawOffset);
 	pipeline->BindTexture(0, *atlas);
 	pipeline->Draw(PrimitiveTopology::Triangles, 0, static_cast<uint32_t>(vertsScratch.size()));
 	pipeline->Disable();

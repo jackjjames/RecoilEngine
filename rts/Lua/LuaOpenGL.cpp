@@ -21,6 +21,7 @@
 #include <optional>
 #include <variant>
 #include <span>
+#include <unordered_map>
 
 #include <fmt/format.h>
 
@@ -54,6 +55,9 @@
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/IRenderBackend.h"
 #include "Rendering/LineDrawer.h"
+#if defined(RENDER_BACKEND_METAL)
+#include "Rendering/MetalLuaUIRenderer.h"
+#endif
 #include "Rendering/ShadowHandler.h"
 #include "Rendering/LuaObjectDrawer.h"
 #include "Rendering/Features/FeatureDrawer.h"
@@ -351,29 +355,430 @@ static int MetalLuaFont_NoOp(lua_State*)
 	return 0;
 }
 
+static std::unordered_map<int, std::shared_ptr<CglFont>>& MetalLuaFonts()
+{
+	static std::unordered_map<int, std::shared_ptr<CglFont>> fonts;
+	return fonts;
+}
+
+static int MetalLuaFontNextID()
+{
+	static int nextID = 1;
+	return nextID++;
+}
+
+static CglFont* MetalLuaFontFromTable(lua_State* L, int tableIdx)
+{
+	if (!lua_istable(L, tableIdx))
+		return nullptr;
+
+	lua_getfield(L, tableIdx, "fontID");
+	const int fontID = lua_isnumber(L, -1) ? lua_toint(L, -1) : 0;
+	lua_pop(L, 1);
+
+	const auto it = MetalLuaFonts().find(fontID);
+	return (it != MetalLuaFonts().end() && it->second != nullptr) ? it->second.get() : nullptr;
+}
+
+static std::string MetalLuaNormalizeFontPath(const char* path)
+{
+	std::string normalized = (path != nullptr) ? path : "";
+	if (normalized.empty())
+		return normalized;
+
+	const std::string fontsDir = "/fonts/";
+	const size_t fontsPos = normalized.rfind(fontsDir);
+	if (fontsPos != std::string::npos)
+		return normalized.substr(fontsPos + fontsDir.size());
+
+	if (!normalized.empty() && normalized[0] == '/') {
+		const size_t slashPos = normalized.rfind('/');
+		if (slashPos != std::string::npos)
+			return normalized.substr(slashPos + 1);
+	}
+
+	return normalized;
+}
+
+static int MetalLuaFontLineCount(const char* text)
+{
+	int numLines = 1;
+	for (const char* c = text; *c != '\0'; ++c) {
+		if (*c == '\n')
+			++numLines;
+	}
+	return numLines;
+}
+
+static int MetalLuaTextOptions(const char* c)
+{
+	int options = FONT_NEAREST;
+	while (c != nullptr && *c != 0) {
+		switch (*(c++)) {
+			case 'c': { options |= FONT_CENTER;       } break;
+			case 'r': { options |= FONT_RIGHT;        } break;
+
+			case 'a': { options |= FONT_ASCENDER;     } break;
+			case 't': { options |= FONT_TOP;          } break;
+			case 'v': { options |= FONT_VCENTER;      } break;
+			case 'x': { options |= FONT_BASELINE;     } break;
+			case 'b': { options |= FONT_BOTTOM;       } break;
+			case 'd': { options |= FONT_DESCENDER;    } break;
+
+			case 'N': { options |= FONT_NORM;         } break;
+			case 'S': { options |= FONT_SCALE;        } break;
+			default: break;
+		}
+	}
+	return options;
+}
+
+static float MetalLuaFontSize(lua_State* L, int tableIdx)
+{
+	lua_getfield(L, tableIdx, "size");
+	const float size = lua_isnumber(L, -1) ? lua_tofloat(L, -1) : 14.0f;
+	lua_pop(L, 1);
+	return size;
+}
+
+static int MetalLuaGL_Text(lua_State* L)
+{
+	LuaUITextDraw textDraw;
+	textDraw.text = std::string(luaL_checkstring(L, 1), lua_strlen(L, 1));
+	textDraw.x = luaL_checkfloat(L, 2);
+	textDraw.y = luaL_checkfloat(L, 3);
+	textDraw.size = luaL_optnumber(L, 4, 12.0f);
+	textDraw.fontSize = 12.0f;
+	textDraw.options = MetalLuaTextOptions(luaL_optstring(L, 5, ""));
+	MetalLuaUI::DrawText(textDraw);
+	return 0;
+}
+
+static int MetalLuaGL_GetTextWidth(lua_State* L)
+{
+	const std::string text(luaL_optsstring(L, 1, ""));
+	if (font != nullptr) {
+		lua_pushnumber(L, font->GetTextWidth(text));
+		return 1;
+	}
+
+	lua_pushnumber(L, text.size() * 0.5f);
+	return 1;
+}
+
+static int MetalLuaGL_GetTextHeight(lua_State* L)
+{
+	const std::string text(luaL_optsstring(L, 1, ""));
+	float descender = 0.0f;
+	int numLines = 1;
+	const float height = (font != nullptr) ? font->GetTextHeight(text, &descender, &numLines) : 1.0f;
+	lua_pushnumber(L, height);
+	lua_pushnumber(L, descender);
+	lua_pushinteger(L, numLines);
+	return 3;
+}
+
+static int MetalLuaFont_Print(lua_State* L)
+{
+	LuaUITextDraw textDraw;
+	textDraw.text = std::string(luaL_checkstring(L, 2), lua_strlen(L, 2));
+	textDraw.x = luaL_checkfloat(L, 3);
+	textDraw.y = luaL_checkfloat(L, 4);
+	const float fontSize = MetalLuaFontSize(L, 1);
+	textDraw.size = luaL_optfloat(L, 5, fontSize);
+	textDraw.fontSize = fontSize;
+	textDraw.options = MetalLuaTextOptions(luaL_optstring(L, 6, ""));
+	MetalLuaUI::DrawText(textDraw);
+	return 0;
+}
+
+static int MetalLuaGL_CreateTexture(lua_State* L)
+{
+	const int width = luaL_checkint(L, 1);
+	const int height = luaL_checkint(L, 2);
+	lua_pushinteger(L, MetalLuaUI::CreateTexture(width, height));
+	return 1;
+}
+
+static int MetalLuaGL_DeleteTexture(lua_State* L)
+{
+	if (!lua_isnumber(L, 1))
+		return 0;
+
+	MetalLuaUI::DeleteTexture(lua_toint(L, 1));
+	return 0;
+}
+
+static int MetalLuaGL_Texture(lua_State* L)
+{
+	if (lua_isboolean(L, 1) && !lua_toboolean(L, 1)) {
+		MetalLuaUI::UnbindTexture();
+		return 0;
+	}
+
+	if (lua_isnumber(L, 1))
+		MetalLuaUI::BindTexture(lua_toint(L, 1));
+	else
+		MetalLuaUI::UnbindTexture();
+	return 0;
+}
+
+static int MetalLuaGL_RenderToTexture(lua_State* L)
+{
+	const int textureID = luaL_checkint(L, 1);
+	luaL_checktype(L, 2, LUA_TFUNCTION);
+	const int argCount = lua_gettop(L) - 2;
+
+	MetalLuaUI::RenderToTexture(textureID, [L, argCount]() {
+		lua_pushvalue(L, 2);
+		for (int arg = 0; arg < argCount; ++arg)
+			lua_pushvalue(L, 3 + arg);
+		lua_call(L, argCount, 0);
+	});
+	return 0;
+}
+
+static int MetalLuaGL_TexRect(lua_State* L)
+{
+	MetalLuaUI::DrawBoundTextureRect(
+		luaL_checkfloat(L, 1),
+		luaL_checkfloat(L, 2),
+		luaL_checkfloat(L, 3),
+		luaL_checkfloat(L, 4)
+	);
+	return 0;
+}
+
+static int MetalLuaGL_Rect(lua_State* L)
+{
+	MetalLuaUI::DrawRect(
+		luaL_checkfloat(L, 1),
+		luaL_checkfloat(L, 2),
+		luaL_checkfloat(L, 3),
+		luaL_checkfloat(L, 4)
+	);
+	return 0;
+}
+
+static int MetalLuaGL_Color(lua_State* L)
+{
+	float colorValues[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+	if (lua_gettop(L) == 1 && lua_istable(L, 1)) {
+		const int count = LuaUtils::ParseFloatArray(L, 1, colorValues, 4);
+		if (count == 3)
+			colorValues[3] = 1.0f;
+	} else {
+		colorValues[0] = luaL_optnumber(L, 1, 1.0f);
+		colorValues[1] = luaL_optnumber(L, 2, 1.0f);
+		colorValues[2] = luaL_optnumber(L, 3, 1.0f);
+		colorValues[3] = luaL_optnumber(L, 4, 1.0f);
+	}
+
+	MetalLuaUI::SetColor(
+		colorValues[0],
+		colorValues[1],
+		colorValues[2],
+		colorValues[3]
+	);
+	return 0;
+}
+
+static int MetalLuaGL_Scissor(lua_State* L)
+{
+	const int args = lua_gettop(L);
+	if (args == 1) {
+		MetalLuaUI::SetScissor(luaL_checkboolean(L, 1), 0, 0, 0, 0);
+		return 0;
+	}
+
+	if (args == 4) {
+		const int x = luaL_checkint(L, 1);
+		const int y = luaL_checkint(L, 2);
+		const int w = luaL_checkint(L, 3);
+		const int h = luaL_checkint(L, 4);
+		if (w < 0) luaL_argerror(L, 3, "<width> must be greater than or equal zero!");
+		if (h < 0) luaL_argerror(L, 4, "<height> must be greater than or equal zero!");
+		MetalLuaUI::SetScissor(true, x, y, w, h);
+		return 0;
+	}
+
+	luaL_error(L, "Incorrect arguments to gl.Scissor()");
+	return 0;
+}
+
+static int MetalLuaGL_Blending(lua_State* L)
+{
+	const int args = lua_gettop(L);
+	if (args == 1 && lua_isboolean(L, 1)) {
+		MetalLuaUI::SetBlending(lua_toboolean(L, 1));
+		return 0;
+	}
+
+	if (args == 1 && lua_israwstring(L, 1)) {
+		const char* mode = lua_tostring(L, 1);
+		MetalLuaUI::SetBlending(strcmp(mode, "disable") != 0);
+		return 0;
+	}
+
+	if (args == 2 && lua_isnumber(L, 1) && lua_isnumber(L, 2)) {
+		MetalLuaUI::SetBlending(true);
+		return 0;
+	}
+
+	luaL_error(L, "Incorrect arguments to gl.Blending()");
+	return 0;
+}
+
+static int MetalLuaGL_BlendFunc(lua_State*)
+{
+	MetalLuaUI::SetBlending(true);
+	return 0;
+}
+
+static int MetalLuaGL_PushMatrix(lua_State*)
+{
+	MetalLuaUI::PushMatrix();
+	return 0;
+}
+
+static int MetalLuaGL_PopMatrix(lua_State*)
+{
+	MetalLuaUI::PopMatrix();
+	return 0;
+}
+
+static int MetalLuaGL_Translate(lua_State* L)
+{
+	MetalLuaUI::Translate(
+		luaL_optnumber(L, 1, 0.0f),
+		luaL_optnumber(L, 2, 0.0f),
+		luaL_optnumber(L, 3, 0.0f)
+	);
+	return 0;
+}
+
+static int MetalLuaGL_Scale(lua_State* L)
+{
+	MetalLuaUI::Scale(
+		luaL_optnumber(L, 1, 1.0f),
+		luaL_optnumber(L, 2, 1.0f),
+		luaL_optnumber(L, 3, 1.0f)
+	);
+	return 0;
+}
+
+static int MetalLuaGL_CreateList(lua_State* L)
+{
+	luaL_checktype(L, 1, LUA_TFUNCTION);
+	const int argCount = lua_gettop(L) - 1;
+
+	const int listID = MetalLuaUI::CreateList([L, argCount]() {
+		lua_pushvalue(L, 1);
+		for (int arg = 0; arg < argCount; ++arg)
+			lua_pushvalue(L, 2 + arg);
+		lua_call(L, argCount, 0);
+	});
+
+	lua_pushinteger(L, listID);
+	return 1;
+}
+
+static int MetalLuaGL_DeleteList(lua_State* L)
+{
+	if (lua_isnumber(L, 1))
+		MetalLuaUI::DeleteList(lua_toint(L, 1));
+	return 0;
+}
+
+static int MetalLuaGL_CallList(lua_State* L)
+{
+	if (lua_isnumber(L, 1))
+		MetalLuaUI::CallList(lua_toint(L, 1));
+	return 0;
+}
+
 static int MetalLuaFont_GetTextWidth(lua_State* L)
 {
-	const char* text = luaL_optstring(L, 2, "");
-	lua_pushnumber(L, strlen(text) * 0.5f);
+	const std::string text(luaL_optsstring(L, 2, ""));
+	if (CglFont* f = MetalLuaFontFromTable(L, 1)) {
+		lua_pushnumber(L, f->GetTextWidth(text));
+		return 1;
+	}
+
+	lua_pushnumber(L, text.size() * 0.5f);
 	return 1;
 }
 
 static int MetalLuaFont_GetTextHeight(lua_State* L)
 {
-	lua_pushnumber(L, 1.0f);
-	return 1;
+	const std::string text(luaL_optsstring(L, 2, ""));
+	float descender = 0.0f;
+	int numLines = 1;
+	CglFont* f = MetalLuaFontFromTable(L, 1);
+	const float height = (f != nullptr) ? f->GetTextHeight(text, &descender, &numLines) : 1.0f;
+	lua_pushnumber(L, height);
+	lua_pushnumber(L, descender);
+	lua_pushinteger(L, numLines);
+	return 3;
 }
 
 static int MetalLuaFont_WrapText(lua_State* L)
 {
-	lua_pushvalue(L, 2);
-	return 1;
+	const std::string text(luaL_optsstring(L, 2, ""));
+	if (CglFont* f = MetalLuaFontFromTable(L, 1)) {
+		const float maxWidth = luaL_optfloat(L, 3, 1.0e9f);
+		const float maxHeight = luaL_optnumber(L, 4, CTextWrap::MAX_HEIGHT_DEFAULT);
+		const float fontSize = luaL_optnumber(L, 5, f->GetSize());
+		const std::string wrapped = f->Wrap(text, fontSize, maxWidth, maxHeight);
+		lua_pushsstring(L, wrapped);
+		lua_pushinteger(L, MetalLuaFontLineCount(wrapped.c_str()));
+		return 2;
+	}
+
+	lua_pushsstring(L, text);
+	lua_pushinteger(L, MetalLuaFontLineCount(text.c_str()));
+	return 2;
 }
 
 static int MetalLuaGL_LoadFont(lua_State* L)
 {
+	const char* path = luaL_optstring(L, 1, "");
+	const float size = luaL_optfloat(L, 2, 14.0f);
+	const float outlineWidth = luaL_optfloat(L, 3, 2.0f);
+	const float outlineWeight = luaL_optfloat(L, 4, 15.0f);
+	const std::string normalizedPath = MetalLuaNormalizeFontPath(path);
+	auto loadedFont = CglFont::LoadFont(normalizedPath, int(size), int(outlineWidth), outlineWeight);
+	const int fontID = loadedFont != nullptr ? MetalLuaFontNextID() : 0;
+	if (fontID != 0)
+		MetalLuaFonts()[fontID] = loadedFont;
+
 	lua_newtable(L);
-	LuaPushRawNamedCFunc(L, "Print", MetalLuaFont_NoOp);
+	lua_pushinteger(L, fontID);
+	lua_setfield(L, -2, "fontID");
+	lua_pushsstring(L, normalizedPath);
+	lua_setfield(L, -2, "path");
+	lua_pushnumber(L, loadedFont != nullptr ? loadedFont->GetSize() : size);
+	lua_setfield(L, -2, "size");
+	lua_pushnumber(L, loadedFont != nullptr ? loadedFont->GetLineHeight() : size);
+	lua_setfield(L, -2, "lineheight");
+	lua_pushnumber(L, loadedFont != nullptr ? loadedFont->GetLineHeight() : size);
+	lua_setfield(L, -2, "height");
+	lua_pushnumber(L, loadedFont != nullptr ? loadedFont->GetDescender() : 0.0f);
+	lua_setfield(L, -2, "descender");
+	lua_pushnumber(L, loadedFont != nullptr ? loadedFont->GetOutlineWidth() : outlineWidth);
+	lua_setfield(L, -2, "outlinewidth");
+	lua_pushnumber(L, loadedFont != nullptr ? loadedFont->GetOutlineWeight() : outlineWeight);
+	lua_setfield(L, -2, "outlineweight");
+	lua_pushnumber(L, loadedFont != nullptr ? loadedFont->GetTextureWidth() : 1024.0f);
+	lua_setfield(L, -2, "texturewidth");
+	lua_pushnumber(L, loadedFont != nullptr ? loadedFont->GetTextureHeight() : 1024.0f);
+	lua_setfield(L, -2, "textureheight");
+	lua_pushstring(L, loadedFont != nullptr ? loadedFont->GetFamily().c_str() : "");
+	lua_setfield(L, -2, "family");
+	lua_pushstring(L, loadedFont != nullptr ? loadedFont->GetStyle().c_str() : "");
+	lua_setfield(L, -2, "style");
+
+	LuaPushRawNamedCFunc(L, "Print", MetalLuaFont_Print);
 	LuaPushRawNamedCFunc(L, "PrintWorld", MetalLuaFont_NoOp);
 	LuaPushRawNamedCFunc(L, "Begin", MetalLuaFont_NoOp);
 	LuaPushRawNamedCFunc(L, "End", MetalLuaFont_NoOp);
@@ -385,6 +790,65 @@ static int MetalLuaGL_LoadFont(lua_State* L)
 	LuaPushRawNamedCFunc(L, "SetOutlineColor", MetalLuaFont_NoOp);
 	LuaPushRawNamedCFunc(L, "SetAutoOutlineColor", MetalLuaFont_NoOp);
 	LuaPushRawNamedCFunc(L, "BindTexture", MetalLuaFont_NoOp);
+	return 1;
+}
+
+static int MetalLuaGL_DeleteFont(lua_State* L)
+{
+	if (!lua_istable(L, 1))
+		return 0;
+
+	lua_getfield(L, 1, "fontID");
+	const int fontID = lua_isnumber(L, -1) ? lua_toint(L, -1) : 0;
+	lua_pop(L, 1);
+	MetalLuaFonts().erase(fontID);
+
+	lua_pushinteger(L, 0);
+	lua_setfield(L, 1, "fontID");
+	return 0;
+}
+
+static int MetalLuaGL_NoOpObjectMethod(lua_State*)
+{
+	return 0;
+}
+
+static int MetalLuaGL_NoOpObjectGetID(lua_State* L)
+{
+	lua_pushinteger(L, 0);
+	return 1;
+}
+
+static void MetalLuaGL_PushNoOpVBO(lua_State* L)
+{
+	lua_newtable(L);
+	LuaPushRawNamedCFunc(L, "Define", MetalLuaGL_NoOpObjectMethod);
+	LuaPushRawNamedCFunc(L, "Upload", MetalLuaGL_NoOpObjectMethod);
+	LuaPushRawNamedCFunc(L, "Delete", MetalLuaGL_NoOpObjectMethod);
+	LuaPushRawNamedCFunc(L, "GetID", MetalLuaGL_NoOpObjectGetID);
+}
+
+static void MetalLuaGL_PushNoOpVAO(lua_State* L)
+{
+	lua_newtable(L);
+	LuaPushRawNamedCFunc(L, "AttachVertexBuffer", MetalLuaGL_NoOpObjectMethod);
+	LuaPushRawNamedCFunc(L, "AttachIndexBuffer", MetalLuaGL_NoOpObjectMethod);
+	LuaPushRawNamedCFunc(L, "AttachInstanceBuffer", MetalLuaGL_NoOpObjectMethod);
+	LuaPushRawNamedCFunc(L, "DrawArrays", MetalLuaGL_NoOpObjectMethod);
+	LuaPushRawNamedCFunc(L, "DrawElements", MetalLuaGL_NoOpObjectMethod);
+	LuaPushRawNamedCFunc(L, "Delete", MetalLuaGL_NoOpObjectMethod);
+	LuaPushRawNamedCFunc(L, "GetID", MetalLuaGL_NoOpObjectGetID);
+}
+
+static int MetalLuaGL_GetVBO(lua_State* L)
+{
+	MetalLuaGL_PushNoOpVBO(L);
+	return 1;
+}
+
+static int MetalLuaGL_GetVAO(lua_State* L)
+{
+	MetalLuaGL_PushNoOpVAO(L);
 	return 1;
 }
 
@@ -474,8 +938,32 @@ bool LuaOpenGL::PushEntries(lua_State* L)
 	}
 
 #if defined(RENDER_BACKEND_METAL)
+	LuaPushRawNamedCFunc(L, "BeginText", MetalLuaFont_NoOp);
+	LuaPushRawNamedCFunc(L, "Text", MetalLuaGL_Text);
+	LuaPushRawNamedCFunc(L, "EndText", MetalLuaFont_NoOp);
+	LuaPushRawNamedCFunc(L, "GetTextWidth", MetalLuaGL_GetTextWidth);
+	LuaPushRawNamedCFunc(L, "GetTextHeight", MetalLuaGL_GetTextHeight);
+	LuaPushRawNamedCFunc(L, "Rect", MetalLuaGL_Rect);
+	LuaPushRawNamedCFunc(L, "Color", MetalLuaGL_Color);
+	LuaPushRawNamedCFunc(L, "Scissor", MetalLuaGL_Scissor);
+	LuaPushRawNamedCFunc(L, "Blending", MetalLuaGL_Blending);
+	LuaPushRawNamedCFunc(L, "BlendFunc", MetalLuaGL_BlendFunc);
+	LuaPushRawNamedCFunc(L, "PushMatrix", MetalLuaGL_PushMatrix);
+	LuaPushRawNamedCFunc(L, "PopMatrix", MetalLuaGL_PopMatrix);
+	LuaPushRawNamedCFunc(L, "Translate", MetalLuaGL_Translate);
+	LuaPushRawNamedCFunc(L, "Scale", MetalLuaGL_Scale);
+	LuaPushRawNamedCFunc(L, "CreateList", MetalLuaGL_CreateList);
+	LuaPushRawNamedCFunc(L, "CallList", MetalLuaGL_CallList);
+	LuaPushRawNamedCFunc(L, "DeleteList", MetalLuaGL_DeleteList);
+	LuaPushRawNamedCFunc(L, "CreateTexture", MetalLuaGL_CreateTexture);
+	LuaPushRawNamedCFunc(L, "DeleteTexture", MetalLuaGL_DeleteTexture);
+	LuaPushRawNamedCFunc(L, "Texture", MetalLuaGL_Texture);
+	LuaPushRawNamedCFunc(L, "RenderToTexture", MetalLuaGL_RenderToTexture);
+	LuaPushRawNamedCFunc(L, "TexRect", MetalLuaGL_TexRect);
 	LuaPushRawNamedCFunc(L, "LoadFont", MetalLuaGL_LoadFont);
-	LuaPushRawNamedCFunc(L, "DeleteFont", MetalLuaGLCompat::UnsupportedGL);
+	LuaPushRawNamedCFunc(L, "DeleteFont", MetalLuaGL_DeleteFont);
+	LuaPushRawNamedCFunc(L, "GetVBO", MetalLuaGL_GetVBO);
+	LuaPushRawNamedCFunc(L, "GetVAO", MetalLuaGL_GetVAO);
 	LuaPushRawNamedCFunc(L, "AddFallbackFont", MetalLuaGLCompat::UnsupportedGL);
 	LuaPushRawNamedCFunc(L, "ClearFallbackFonts", MetalLuaGLCompat::UnsupportedGL);
 #else
@@ -834,6 +1322,9 @@ void LuaOpenGL::EnableDrawScreenCommon()
 	EnableCommon(DRAW_SCREEN);
 	resetMatrixFunc = ResetScreenMatrices;
 
+#if defined(RENDER_BACKEND_METAL)
+	return;
+#endif
 	SetupScreenMatrices();
 	SetupScreenLighting();
 	ResetGLState();
@@ -843,6 +1334,10 @@ void LuaOpenGL::EnableDrawScreenCommon()
 
 void LuaOpenGL::DisableDrawScreenCommon()
 {
+#if defined(RENDER_BACKEND_METAL)
+	DisableCommon(DRAW_SCREEN);
+	return;
+#endif
 	RevertScreenLighting();
 	RevertScreenMatrices();
 	DisableCommon(DRAW_SCREEN);
@@ -851,6 +1346,9 @@ void LuaOpenGL::DisableDrawScreenCommon()
 
 void LuaOpenGL::ResetDrawScreenCommon()
 {
+#if defined(RENDER_BACKEND_METAL)
+	return;
+#endif
 	if (safeMode) {
 		ResetScreenMatrices();
 		ResetGLState();

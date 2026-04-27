@@ -113,6 +113,7 @@ private:
 	bool Draw() override;
 	bool Update() override;
 	bool UpdateUnsynced(const spring_time currentTime);
+	void UpdateDrawFrameAccounting(const spring_time currentTime, bool updateLastFrameStart);
 
 	void DrawSkip(bool blackscreen = true);
 	void DrawInputReceivers();

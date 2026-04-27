@@ -3,6 +3,7 @@
 #include "Rendering/GlobalRendering.h"
 #include "Rendering/IRenderTarget.h"
 #include "Rendering/MetalRenderGlobals.h"
+#include "Rendering/Platform/MetalFrameCapture.h"
 #include "Rendering/Platform/MetalFrameControl.h"
 #include "System/Config/ConfigHandler.h"
 #include "System/Log/ILog.h"
@@ -42,6 +43,25 @@ static inline void UpdateDrawableSize(SDL_Window* window, CAMetalLayer* layer)
 	int height = 0;
 	SDL_Metal_GetDrawableSize(window, &width, &height);
 	layer.drawableSize = CGSizeMake(width, height);
+}
+
+static inline void SyncDrawableGeometry(CGlobalRendering& rendering, CAMetalLayer* layer)
+{
+	int width = 0;
+	int height = 0;
+	SDL_Metal_GetDrawableSize(rendering.sdlWindow, &width, &height);
+	layer.drawableSize = CGSizeMake(width, height);
+
+	if (width <= 0 || height <= 0)
+		return;
+	if (rendering.winSizeX == width && rendering.winSizeY == height)
+		return;
+
+	rendering.winSizeX = width;
+	rendering.winSizeY = height;
+	rendering.UpdateViewPortGeometry();
+	rendering.UpdatePixelGeometry();
+	rendering.UpdateScreenMatrices();
 }
 
 class MetalRenderContext final : public IRenderContext
@@ -125,7 +145,7 @@ public:
 	{
 		if (auto* state = static_cast<MetalContextState*>(rendering.glContext)) {
 			auto* layer = (__bridge CAMetalLayer*)state->layer;
-			UpdateDrawableSize(rendering.sdlWindow, layer);
+			SyncDrawableGeometry(rendering, layer);
 		}
 	}
 
@@ -273,6 +293,10 @@ void End(SDL_Window* window)
 		if (drawable != nil)
 			[commandBuffer presentDrawable:drawable];
 		[commandBuffer commit];
+		if (drawable != nil && MetalFrameCapture::WantsFrameDump()) {
+			[commandBuffer waitUntilCompleted];
+			MetalFrameCapture::MaybeDumpDrawable((__bridge void*)drawable);
+		}
 		[commandBuffer release];
 	}
 

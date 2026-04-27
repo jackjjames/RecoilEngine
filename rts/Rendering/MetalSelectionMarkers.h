@@ -10,14 +10,10 @@
 class IBuffer;
 class IShaderPipeline;
 
-// Selection rings + health bars overlay. Walks unitHandler each
-// frame and emits, in world space:
-//   1) a thin white ring on the ground at the base of every selected
-//      unit, sized by the unit's collision radius; alpha-blended so
-//      it tints the underlying terrain rather than overpainting it
-//   2) a small camera-billboarded health bar above every unit that
-//      is damaged or owned by the local ally team, split red/green
-//      proportional to health/maxHealth
+// Selection rings overlay. Walks unitHandler each frame and emits a
+// thin white ring on the ground at the base of every selected unit,
+// sized by the unit's collision radius; alpha-blended so it tints the
+// underlying terrain rather than overpainting it.
 //
 // Both pass through a single pipeline (vec3 position + vec4 colour)
 // keyed by view-proj matrix - no per-marker UBO. Drawn after units
@@ -25,9 +21,9 @@ class IShaderPipeline;
 // top of the silhouette.
 //
 // All inputs come through public unitHandler / teamHandler / camera
-// surface; common code stays untouched. The proper CSelectionDrawer
-// port (with command queues, build squares, formation lines) lands
-// later once IRenderTarget grows colour attachments on Metal.
+// surface; common code stays untouched. Lua/UI health bars are not
+// duplicated here: they need the Lua render bridge rather than a
+// Metal-only fallback.
 class MetalSelectionMarkers
 {
 public:

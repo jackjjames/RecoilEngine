@@ -48,11 +48,9 @@
 #include "Rendering/ShadowHandler.h"
 #include "Rendering/TeamHighlight.h"
 #if defined(RENDER_BACKEND_METAL)
-#include "Rendering/MetalDefaultCamera.h"
 #include "Rendering/MetalSkyPass.h"
 #include "Rendering/MetalCommandLines.h"
 #include "Rendering/MetalMinimap.h"
-#include "Rendering/MetalResourceHUD.h"
 #include "Rendering/MetalSelectionMarkers.h"
 #include "Rendering/MetalWorldCursor.h"
 #include "Rendering/MetalDeathFX.h"
@@ -1501,7 +1499,6 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalMinimap>      metalMinimap;
 	static std::unique_ptr<MetalSelectionMarkers> metalSelectionMarkers;
 	static std::unique_ptr<MetalCommandLines> metalCommandLines;
-	static std::unique_ptr<MetalResourceHUD>  metalResourceHUD;
 	static std::unique_ptr<MetalWorldCursor>  metalWorldCursor;
 	static std::unique_ptr<MetalDeathFX>      metalDeathFX;
 	static std::unique_ptr<MetalCraters>      metalCraters;
@@ -1510,6 +1507,7 @@ bool CGame::Draw() {
 	static std::unique_ptr<MetalRangeRings>   metalRangeRings;
 	static MetalSplashRenderer                loadTile;
 	static MetalTextOverlay                   textOverlay;
+
 	if (metalWorldDrawer == nullptr)
 		metalWorldDrawer = std::make_unique<MetalWorldDrawer>();
 	if (metalSkyPass == nullptr)
@@ -1528,8 +1526,6 @@ bool CGame::Draw() {
 		metalSelectionMarkers = std::make_unique<MetalSelectionMarkers>();
 	if (metalCommandLines == nullptr)
 		metalCommandLines = std::make_unique<MetalCommandLines>();
-	if (metalResourceHUD == nullptr)
-		metalResourceHUD = std::make_unique<MetalResourceHUD>();
 	if (metalWorldCursor == nullptr)
 		metalWorldCursor = std::make_unique<MetalWorldCursor>();
 	if (metalDeathFX == nullptr)
@@ -1556,12 +1552,6 @@ bool CGame::Draw() {
 	// stay identical between backends.
 	if (camHandler != nullptr && gu != nullptr)
 		camHandler->UpdateController(playerHandler.Player(gu->myPlayerNum), gu->fpsMode);
-
-	// Pre-Lua-UI bring-up: pin the camera over the local commander on
-	// the first frame a start position is available. See
-	// MetalDefaultCamera.h for why this is needed and when it goes
-	// away.
-	MetalDefaultCamera::MaybeSnapToStartPos();
 
 	if (camera != nullptr)
 		camera->Update();
@@ -1669,24 +1659,11 @@ bool CGame::Draw() {
 	if (metalWorldCursor && metalWorldCursor->IsValid())
 		metalWorldCursor->Draw();
 
-	// Bottom-left minimap with team-coloured unit dots. Drawn last so
-	// it sits on top of the world geometry, before the debug HUD
-	// text. Skipped on non-SMF maps (no minimap mip in the .smf).
+	// Engine-configured minimap with team-coloured unit dots. Geometry
+	// comes from CMiniMap so Metal follows MiniMapGeometry / LuaUI-PIP
+	// layout instead of maintaining a separate HUD placement.
 	if (metalMinimap && metalMinimap->IsValid())
 		metalMinimap->Draw();
-
-	// Top-of-screen metal / energy bars for the local team. Drawn
-	// after the minimap so its background backing rect sits above
-	// the world but the labels share the same MetalTextOverlay
-	// pipeline already in use for the debug HUD line below.
-	if (metalResourceHUD && metalResourceHUD->IsValid())
-		metalResourceHUD->Draw(&textOverlay);
-
-	char buf[128];
-	SNPRINTF(buf, sizeof(buf),
-		"stage 9 - frame %u - sim %d",
-		globalRendering->drawFrame, gs != nullptr ? gs->frameNum : -1);
-	textOverlay.DrawLine(-0.95f, -0.70f, 0.035f, buf);
 
 	SetDrawMode(gameNotDrawing);
 	lastDrawFrameTime = spring_gettime();

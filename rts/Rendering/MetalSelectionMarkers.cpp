@@ -13,7 +13,6 @@
 #include "Rendering/IRenderBackend.h"
 #include "Rendering/IRenderTarget.h"
 #include "Rendering/Shaders/IShaderPipeline.h"
-#include "Sim/Misc/TeamHandler.h"
 #include "Sim/Units/Unit.h"
 #include "Sim/Units/UnitHandler.h"
 #include "System/Log/ILog.h"
@@ -29,9 +28,7 @@
 
 namespace {
 
-// Vertex format for both rings and bars: world-space vec3 + vec4
-// colour. Same pipeline drives both - cheaper than two pipelines and
-// visually they're both thin lit-on-top overlays.
+// Vertex format for world-space selection markers.
 struct MarkerVertex {
 	float pos[3];
 	float color[4];
@@ -117,66 +114,6 @@ void EmitSelectionRing(std::vector<MarkerVertex>& out, const CUnit& u)
 	}
 }
 
-
-void EmitHealthBar(std::vector<MarkerVertex>& out, const CUnit& u,
-                   const float3& camRight, const float3& camUp)
-{
-	const float ratio = (u.maxHealth > 0.0f)
-		? std::clamp(u.health / u.maxHealth, 0.0f, 1.0f)
-		: 1.0f;
-
-	// World-space size and offset. Tuned so a typical commander shows
-	// a readable bar at default zoom; scales with unit radius so
-	// dreadnoughts get a proportionally larger bar.
-	const float halfW = std::max(u.radius * 0.7f, 12.0f);
-	const float halfH = std::max(u.radius * 0.07f, 1.6f);
-	const float yLift = u.height + halfH * 4.0f + 8.0f;
-
-	const float3 center(u.pos.x, u.pos.y + yLift, u.pos.z);
-
-	auto addQuad = [&](float xLo, float xHi, const float color[4]) {
-		const float3 lo = center + camRight * xLo + camUp * (-halfH);
-		const float3 hi = center + camRight * xHi + camUp * ( halfH);
-		const float3 loHi = center + camRight * xLo + camUp * ( halfH);
-		const float3 hiLo = center + camRight * xHi + camUp * (-halfH);
-
-		MarkerVertex v00{ {lo.x,   lo.y,   lo.z},   {color[0], color[1], color[2], color[3]} };
-		MarkerVertex v10{ {hiLo.x, hiLo.y, hiLo.z}, {color[0], color[1], color[2], color[3]} };
-		MarkerVertex v11{ {hi.x,   hi.y,   hi.z},   {color[0], color[1], color[2], color[3]} };
-		MarkerVertex v01{ {loHi.x, loHi.y, loHi.z}, {color[0], color[1], color[2], color[3]} };
-
-		out.push_back(v00); out.push_back(v10); out.push_back(v11);
-		out.push_back(v00); out.push_back(v11); out.push_back(v01);
-	};
-
-	// Filled portion: green -> amber -> red as health drops.
-	float fillCol[4];
-	if (ratio > 0.5f) {
-		const float t = (ratio - 0.5f) * 2.0f; // 0..1
-		fillCol[0] = 1.0f - t * 0.8f;
-		fillCol[1] = 1.0f;
-		fillCol[2] = 0.2f;
-	} else {
-		const float t = ratio * 2.0f; // 0..1
-		fillCol[0] = 1.0f;
-		fillCol[1] = t;
-		fillCol[2] = 0.1f;
-	}
-	fillCol[3] = 0.95f;
-
-	const float darkBg[4] = { 0.05f, 0.05f, 0.05f, 0.8f };
-
-	const float xMin = -halfW;
-	const float xSplit = -halfW + 2.0f * halfW * ratio;
-	const float xMax = halfW;
-
-	// Background strip behind the full bar so an empty bar still
-	// reads as a unit marker. Drawn first; the fill quad overlays.
-	addQuad(xMin, xMax, darkBg);
-	if (ratio > 0.0f)
-		addQuad(xMin, xSplit, fillCol);
-}
-
 } // namespace
 
 
@@ -186,9 +123,9 @@ MetalSelectionMarkers::MetalSelectionMarkers()
 		return;
 	auto& backend = *globalRendering->renderBackend;
 
-	// Initial buffer sized for ~256 markers (rings + bars). Grows
+	// Initial buffer sized for ~256 selected-unit rings. Grows
 	// power-of-two when active unit count climbs past it.
-	bufferCapacity = 256u * 6u * (kRingSegments + 4u);
+	bufferCapacity = 256u * 6u * kRingSegments;
 	vertexBuffer = backend.CreateBuffer(bufferCapacity * sizeof(MarkerVertex), nullptr);
 	if (!vertexBuffer || !vertexBuffer->IsValid()) {
 		LOG_L(L_ERROR, "[MetalSelectionMarkers] vertex buffer creation failed");
@@ -247,21 +184,8 @@ void MetalSelectionMarkers::Draw()
 	if (units.empty())
 		return;
 
-	// Camera basis vectors for billboarding the health bars. Use
-	// camera-right (worldspace) and a stable "up" that's perpendicular
-	// to right and to the world-up axis - this keeps bars upright and
-	// readable even when the camera tilts.
-	float3 camRight = cam->GetRight();
-	float3 camUp    = cam->GetUp();
-	const float rLen = camRight.Length();
-	const float uLen = camUp.Length();
-	if (rLen < 0.001f || uLen < 0.001f)
-		return;
-	camRight = camRight * (1.0f / rLen);
-	camUp    = camUp    * (1.0f / uLen);
-
 	std::vector<MarkerVertex> verts;
-	verts.reserve(units.size() * 6 * (kRingSegments + 4));
+	verts.reserve(units.size() * 6 * kRingSegments);
 
 	for (const CUnit* u : units) {
 		if (u == nullptr)
@@ -269,14 +193,6 @@ void MetalSelectionMarkers::Draw()
 
 		if (u->isSelected)
 			EmitSelectionRing(verts, *u);
-
-		// Show a health bar when the unit is hurt OR when it's part
-		// of the local ally team (so the player can see status of
-		// their own forces at a glance).
-		const bool isOwn = (u->allyteam == gu->myAllyTeam);
-		const bool isHurt = (u->maxHealth > 0.0f && u->health < u->maxHealth - 0.01f);
-		if (isOwn || isHurt)
-			EmitHealthBar(verts, *u, camRight, camUp);
 	}
 
 	if (verts.empty())

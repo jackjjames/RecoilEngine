@@ -298,6 +298,10 @@ public:
 		texture.desc.width = std::max(1, bitmap.xsize);
 		texture.desc.height = std::max(1, bitmap.ysize);
 		texture.texture = std::move(textureHandle);
+		if (const uint8_t* bitmapPixels = bitmap.GetRawMem(); bitmapPixels != nullptr) {
+			texture.pixels.resize(texture.desc.width * texture.desc.height);
+			std::copy_n(reinterpret_cast<const uint32_t*>(bitmapPixels), texture.pixels.size(), texture.pixels.begin());
+		}
 		namedTextureIDs[name] = textureID;
 		boundTexture = textureID;
 	}
@@ -470,6 +474,10 @@ public:
 			return;
 
 		const auto& texture = it->second;
+		if (capturingTexture != 0) {
+			CaptureTextureRect(texture, x1, y1, x2, y2);
+			return;
+		}
 
 		DrawTextureScreen(texture, x1, y1, x2, y2);
 
@@ -538,6 +546,24 @@ private:
 		RasterizeRect(it->second, rect, localX1, localY1, localX2, localY2);
 	}
 
+	void CaptureTextureRect(const TextureCommandBuffer& source, float x1, float y1, float x2, float y2)
+	{
+		if (source.pixels.empty())
+			return;
+
+		auto it = textures.find(capturingTexture);
+		if (it == textures.end())
+			return;
+
+		const auto matrix = CurrentMatrix();
+		const auto [clipX1, clipY1] = matrix.Transform(x1, y1);
+		const auto [clipX2, clipY2] = matrix.Transform(x2, y2);
+		const auto [localX1, localY1] = ClipToTextureLocal(clipX1, clipY1, it->second.desc);
+		const auto [localX2, localY2] = ClipToTextureLocal(clipX2, clipY2, it->second.desc);
+
+		RasterizeTextureRect(it->second, source, localX1, localY1, localX2, localY2);
+	}
+
 	static uint32_t PackColor(const float* color)
 	{
 		const auto clampByte = [](float v) {
@@ -548,6 +574,35 @@ private:
 		const uint32_t g = clampByte(color[1]);
 		const uint32_t b = clampByte(color[2]);
 		const uint32_t a = clampByte(color[3]);
+		return r | (g << 8) | (b << 16) | (a << 24);
+	}
+
+	static uint32_t TintPixel(uint32_t pixel, const std::array<float, 4>& tint, bool blendEnabled)
+	{
+		const auto scaleByte = [](uint32_t value, float scale) {
+			return uint32_t(std::clamp(float(value) * scale, 0.0f, 255.0f) + 0.5f);
+		};
+
+		const uint32_t r = scaleByte( pixel        & 0xFFu, tint[0]);
+		const uint32_t g = scaleByte((pixel >>  8) & 0xFFu, tint[1]);
+		const uint32_t b = scaleByte((pixel >> 16) & 0xFFu, tint[2]);
+		const uint32_t a = blendEnabled ? scaleByte((pixel >> 24) & 0xFFu, tint[3]) : 0xFFu;
+		return r | (g << 8) | (b << 16) | (a << 24);
+	}
+
+	static uint32_t BlendOver(uint32_t dst, uint32_t src)
+	{
+		const uint32_t srcA = (src >> 24) & 0xFFu;
+		if (srcA == 0)
+			return dst;
+		if (srcA == 0xFFu)
+			return src;
+
+		const uint32_t invA = 255u - srcA;
+		const uint32_t r = (((src        & 0xFFu) * srcA) + ((dst        & 0xFFu) * invA)) / 255u;
+		const uint32_t g = ((((src >>  8) & 0xFFu) * srcA) + (((dst >>  8) & 0xFFu) * invA)) / 255u;
+		const uint32_t b = ((((src >> 16) & 0xFFu) * srcA) + (((dst >> 16) & 0xFFu) * invA)) / 255u;
+		const uint32_t a = std::min(255u, srcA + (((dst >> 24) & 0xFFu) * invA) / 255u);
 		return r | (g << 8) | (b << 16) | (a << 24);
 	}
 
@@ -570,6 +625,40 @@ private:
 			std::fill(row + x0, row + x1, packed);
 		}
 		texture.dirty = true;
+	}
+
+	void RasterizeTextureRect(TextureCommandBuffer& target, const TextureCommandBuffer& source,
+	                          float localX1, float localY1, float localX2, float localY2)
+	{
+		if (target.pixels.empty() || source.pixels.empty())
+			return;
+
+		const float minX = std::min(localX1, localX2);
+		const float maxX = std::max(localX1, localX2);
+		const float minY = std::min(localY1, localY2);
+		const float maxY = std::max(localY1, localY2);
+		const int x0 = std::clamp(int(std::floor(minX)), 0, target.desc.width);
+		const int x1 = std::clamp(int(std::ceil (maxX)), 0, target.desc.width);
+		const int y0 = std::clamp(int(std::floor(minY)), 0, target.desc.height);
+		const int y1 = std::clamp(int(std::ceil (maxY)), 0, target.desc.height);
+		if (x0 >= x1 || y0 >= y1)
+			return;
+
+		const float invWidth = (localX2 != localX1) ? 1.0f / (localX2 - localX1) : 0.0f;
+		const float invHeight = (localY2 != localY1) ? 1.0f / (localY2 - localY1) : 0.0f;
+		for (int y = y0; y < y1; ++y) {
+			uint32_t* dstRow = target.pixels.data() + y * target.desc.width;
+			const float v = std::clamp(((float(y) + 0.5f) - localY1) * invHeight, 0.0f, 1.0f);
+			const int srcY = std::clamp(int(v * float(source.desc.height - 1) + 0.5f), 0, source.desc.height - 1);
+			const uint32_t* srcRow = source.pixels.data() + srcY * source.desc.width;
+			for (int x = x0; x < x1; ++x) {
+				const float u = std::clamp(((float(x) + 0.5f) - localX1) * invWidth, 0.0f, 1.0f);
+				const int srcX = std::clamp(int(u * float(source.desc.width - 1) + 0.5f), 0, source.desc.width - 1);
+				const uint32_t src = TintPixel(srcRow[srcX], color, blendEnabled);
+				dstRow[x] = BlendOver(dstRow[x], src);
+			}
+		}
+		target.dirty = true;
 	}
 
 	void DrawTextScreen(const LuaUITextDraw& draw, float maxX)

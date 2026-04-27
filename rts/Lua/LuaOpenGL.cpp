@@ -723,6 +723,25 @@ static void MetalLuaGL_DrawCapturedRect(const std::vector<MetalLuaImmediateVerte
 	}
 }
 
+static void MetalLuaGL_DrawCapturedTriangle(const std::vector<MetalLuaImmediateVertex>& vertices, size_t i1, size_t i2, size_t i3)
+{
+	if (i1 >= vertices.size() || i2 >= vertices.size() || i3 >= vertices.size())
+		return;
+
+	const MetalLuaImmediateVertex& v1 = vertices[i1];
+	const MetalLuaImmediateVertex& v2 = vertices[i2];
+	const MetalLuaImmediateVertex& v3 = vertices[i3];
+	float color[4] = {
+		(v1.color[0] + v2.color[0] + v3.color[0]) / 3.0f,
+		(v1.color[1] + v2.color[1] + v3.color[1]) / 3.0f,
+		(v1.color[2] + v2.color[2] + v3.color[2]) / 3.0f,
+		std::max({v1.color[3], v2.color[3], v3.color[3]}),
+	};
+
+	MetalLuaUI::SetColor(color[0], color[1], color[2], color[3]);
+	MetalLuaUI::DrawTriangle(v1.x, v1.y, v2.x, v2.y, v3.x, v3.y);
+}
+
 static int MetalLuaGL_Vertex(lua_State* L)
 {
 	if (!MetalLuaImmediateCapturing())
@@ -776,7 +795,7 @@ static int MetalLuaGL_BeginEnd(lua_State* L)
 	vertices.clear();
 
 	const bool previousCapturing = MetalLuaImmediateCapturing();
-	MetalLuaImmediateCapturing() = (primMode == GL_QUADS);
+	MetalLuaImmediateCapturing() = (primMode == GL_QUADS || primMode == GL_TRIANGLES || primMode == GL_TRIANGLE_FAN);
 	lua_pushvalue(L, 2);
 	for (int arg = 3; arg <= args; ++arg)
 		lua_pushvalue(L, arg);
@@ -788,6 +807,12 @@ static int MetalLuaGL_BeginEnd(lua_State* L)
 	if (primMode == GL_QUADS) {
 		for (size_t i = 0; i + 3 < vertices.size(); i += 4)
 			MetalLuaGL_DrawCapturedRect(vertices, i, 4);
+	} else if (primMode == GL_TRIANGLES) {
+		for (size_t i = 0; i + 2 < vertices.size(); i += 3)
+			MetalLuaGL_DrawCapturedTriangle(vertices, i, i + 1, i + 2);
+	} else if (primMode == GL_TRIANGLE_FAN && vertices.size() >= 3) {
+		for (size_t i = 1; i + 1 < vertices.size(); ++i)
+			MetalLuaGL_DrawCapturedTriangle(vertices, 0, i, i + 1);
 	}
 	return 0;
 }
@@ -875,8 +900,12 @@ static int MetalLuaGL_Shape(lua_State* L)
 	if (primMode == GL_QUADS) {
 		for (size_t i = 0; i + 3 < vertices.size(); i += 4)
 			MetalLuaGL_DrawCapturedRect(vertices, i, 4);
+	} else if (primMode == GL_TRIANGLES) {
+		for (size_t i = 0; i + 2 < vertices.size(); i += 3)
+			MetalLuaGL_DrawCapturedTriangle(vertices, i, i + 1, i + 2);
 	} else if (primMode == GL_TRIANGLE_FAN && vertices.size() >= 3) {
-		MetalLuaGL_DrawCapturedRect(vertices, 0, vertices.size());
+		for (size_t i = 1; i + 1 < vertices.size(); ++i)
+			MetalLuaGL_DrawCapturedTriangle(vertices, 0, i, i + 1);
 	}
 	return 0;
 }

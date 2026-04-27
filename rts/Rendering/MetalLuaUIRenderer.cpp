@@ -737,6 +737,14 @@ public:
 		);
 	}
 
+	void DrawTriangle(float x1, float y1, float x2, float y2, float x3, float y3)
+	{
+		if (capturingTexture == 0)
+			return;
+
+		CaptureTriangle(x1, y1, x2, y2, x3, y3);
+	}
+
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2)
 	{
 		DrawBoundTextureRectUV(x1, y1, x2, y2, 0.0f, 1.0f, 1.0f, 0.0f);
@@ -915,6 +923,23 @@ private:
 		RasterizeTextureRect(it->second, source, localX1, localY1, localX2, localY2, u1, v1, u2, v2);
 	}
 
+	void CaptureTriangle(float x1, float y1, float x2, float y2, float x3, float y3)
+	{
+		auto it = textures.find(capturingTexture);
+		if (it == textures.end())
+			return;
+
+		const auto matrix = CurrentMatrix();
+		const auto [clipX1, clipY1] = matrix.Transform(x1, y1);
+		const auto [clipX2, clipY2] = matrix.Transform(x2, y2);
+		const auto [clipX3, clipY3] = matrix.Transform(x3, y3);
+		const auto [localX1, localY1] = ClipToTextureLocal(clipX1, clipY1, it->second.desc);
+		const auto [localX2, localY2] = ClipToTextureLocal(clipX2, clipY2, it->second.desc);
+		const auto [localX3, localY3] = ClipToTextureLocal(clipX3, clipY3, it->second.desc);
+
+		RasterizeTriangle(it->second, localX1, localY1, localX2, localY2, localX3, localY3);
+	}
+
 	bool LocalRectIntersectsCaptureClip(float x1, float y1, float x2, float y2) const
 	{
 		const float minX = std::min(x1, x2);
@@ -989,6 +1014,49 @@ private:
 			} else {
 				for (int x = x0; x < x1; ++x)
 					row[x] = BlendOver(row[x], packed);
+			}
+		}
+		texture.dirty = true;
+	}
+
+	void RasterizeTriangle(TextureCommandBuffer& texture,
+	                       float x1, float y1, float x2, float y2, float x3, float y3)
+	{
+		if (texture.pixels.empty())
+			return;
+
+		const float minX = std::min({x1, x2, x3});
+		const float maxX = std::max({x1, x2, x3});
+		const float minY = std::min({y1, y2, y3});
+		const float maxY = std::max({y1, y2, y3});
+		int x0 = std::clamp(int(std::floor(minX)), 0, texture.desc.width);
+		int xEnd = std::clamp(int(std::ceil(maxX)), 0, texture.desc.width);
+		int y0 = std::clamp(int(std::floor(minY)), 0, texture.desc.height);
+		int yEnd = std::clamp(int(std::ceil(maxY)), 0, texture.desc.height);
+		ApplyCaptureClip(x0, y0, xEnd, yEnd);
+		if (x0 >= xEnd || y0 >= yEnd)
+			return;
+
+		const auto edge = [](float ax, float ay, float bx, float by, float px, float py) {
+			return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
+		};
+		const float area = edge(x1, y1, x2, y2, x3, y3);
+		if (area == 0.0f)
+			return;
+
+		const uint32_t packed = PackColor(color.data());
+		for (int y = y0; y < yEnd; ++y) {
+			uint32_t* row = texture.pixels.data() + y * texture.desc.width;
+			for (int x = x0; x < xEnd; ++x) {
+				const float px = float(x) + 0.5f;
+				const float py = float(y) + 0.5f;
+				const float e1 = edge(x1, y1, x2, y2, px, py);
+				const float e2 = edge(x2, y2, x3, y3, px, py);
+				const float e3 = edge(x3, y3, x1, y1, px, py);
+				if ((area > 0.0f && e1 >= 0.0f && e2 >= 0.0f && e3 >= 0.0f) ||
+				    (area < 0.0f && e1 <= 0.0f && e2 <= 0.0f && e3 <= 0.0f)) {
+					row[x] = blendEnabled ? BlendOver(row[x], packed) : packed;
+				}
 			}
 		}
 		texture.dirty = true;
@@ -1290,6 +1358,7 @@ namespace MetalLuaUI
 	void SetColor(float r, float g, float b, float a) { GetRenderer().SetColor(r, g, b, a); }
 	void DrawText(const LuaUITextDraw& text) { GetRenderer().DrawText(text); }
 	void DrawRect(float x1, float y1, float x2, float y2) { GetRenderer().DrawRect(x1, y1, x2, y2); }
+	void DrawTriangle(float x1, float y1, float x2, float y2, float x3, float y3) { GetRenderer().DrawTriangle(x1, y1, x2, y2, x3, y3); }
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2) { GetRenderer().DrawBoundTextureRect(x1, y1, x2, y2); }
 	void DrawBoundTextureRectUV(float x1, float y1, float x2, float y2, float u1, float v1, float u2, float v2) { GetRenderer().DrawBoundTextureRectUV(x1, y1, x2, y2, u1, v1, u2, v2); }
 }

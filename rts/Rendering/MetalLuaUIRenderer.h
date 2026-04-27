@@ -44,6 +44,7 @@ namespace MetalLuaUI
 	void SetColor(float r, float g, float b, float a);
 	void DrawText(const LuaUITextDraw& text);
 	void DrawRect(float x1, float y1, float x2, float y2);
+	void DrawTriangle(float x1, float y1, float x2, float y2, float x3, float y3);
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2);
 	void DrawBoundTextureRectUV(float x1, float y1, float x2, float y2, float u1, float v1, float u2, float v2);
 }

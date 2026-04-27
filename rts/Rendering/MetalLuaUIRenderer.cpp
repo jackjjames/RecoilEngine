@@ -749,11 +749,24 @@ public:
 		DrawTextureScreenQuad(texture, p00, p10, p01, p11, u1, v1, u2, v2);
 
 		for (const CapturedText& text: texture.texts) {
+			const auto lerp = [](float a, float b, float t) {
+				return a + (b - a) * t;
+			};
+			constexpr float eps = 1.0e-6f;
+			const float texU = text.localX / float(texture.desc.width);
+			const float texV = text.localY / float(texture.desc.height);
+			const float quadU = (std::abs(u2 - u1) > eps) ? (texU - u1) / (u2 - u1) : texU;
+			const float quadV = (std::abs(v2 - v1) > eps) ? (texV - v1) / (v2 - v1) : texV;
+			const float leftX = lerp(p00.first, p01.first, quadV);
+			const float rightX = lerp(p10.first, p11.first, quadV);
+			const float topY = lerp(p01.second, p11.second, quadU);
+			const float bottomY = lerp(p00.second, p10.second, quadU);
+
 			LuaUITextDraw draw = text.draw;
-			draw.x = p00.first + (text.localX / texture.desc.width) * (p11.first - p00.first);
-			draw.y = p00.second + (text.localY / texture.desc.height) * (p11.second - p00.second);
-			draw.size = text.localSize * ((p11.second - p00.second) / texture.desc.height);
-			DrawTextScreen(draw, p11.first);
+			draw.x = lerp(leftX, rightX, quadU);
+			draw.y = lerp(bottomY, topY, quadV);
+			draw.size = text.localSize * (std::abs(topY - bottomY) / float(texture.desc.height));
+			DrawTextScreen(draw, std::max(leftX, rightX));
 		}
 	}
 

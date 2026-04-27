@@ -21,7 +21,7 @@ namespace MetalLuaUI
 	void BindNamedTexture(const std::string& name);
 	void UnbindTexture();
 	bool HasBoundTexture();
-	void RenderToTexture(int textureID, const std::function<void()>& drawFunc);
+	void RenderToTexture(int textureID, const std::function<void()>& drawFunc, bool clear = true, int clipX = 0, int clipY = 0, int clipW = -1, int clipH = -1);
 	bool GetCaptureTextureSize(int& width, int& height);
 	int CreateList(const std::function<void()>& drawFunc);
 	void DeleteList(int listID);

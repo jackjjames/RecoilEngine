@@ -531,14 +531,31 @@ static int MetalLuaGL_RenderToTexture(lua_State* L)
 {
 	const int textureID = luaL_checkint(L, 1);
 	luaL_checktype(L, 2, LUA_TFUNCTION);
-	const int argCount = lua_gettop(L) - 2;
+	bool clear = true;
+	int clipX = 0;
+	int clipY = 0;
+	int clipW = -1;
+	int clipH = -1;
+	int callbackArgStart = 3;
+	if (lua_isboolean(L, 3)) {
+		clear = lua_toboolean(L, 3);
+		callbackArgStart = 4;
+		if (lua_istable(L, 4)) {
+			lua_rawgeti(L, 4, 1); clipX = luaL_optint(L, -1, 0); lua_pop(L, 1);
+			lua_rawgeti(L, 4, 2); clipY = luaL_optint(L, -1, 0); lua_pop(L, 1);
+			lua_rawgeti(L, 4, 3); clipW = luaL_optint(L, -1, -1); lua_pop(L, 1);
+			lua_rawgeti(L, 4, 4); clipH = luaL_optint(L, -1, -1); lua_pop(L, 1);
+			callbackArgStart = 5;
+		}
+	}
+	const int argCount = lua_gettop(L) - callbackArgStart + 1;
 
-	MetalLuaUI::RenderToTexture(textureID, [L, argCount]() {
+	MetalLuaUI::RenderToTexture(textureID, [L, argCount, callbackArgStart]() {
 		lua_pushvalue(L, 2);
 		for (int arg = 0; arg < argCount; ++arg)
-			lua_pushvalue(L, 3 + arg);
+			lua_pushvalue(L, callbackArgStart + arg);
 		lua_call(L, argCount, 0);
-	});
+	}, clear, clipX, clipY, clipW, clipH);
 	return 0;
 }
 

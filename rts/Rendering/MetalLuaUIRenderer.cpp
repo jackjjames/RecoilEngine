@@ -291,6 +291,12 @@ public:
 	{
 		if (textOverlay != nullptr)
 			textOverlay->BeginFrame();
+		matrixStack.clear();
+		matrixStack.push_back(Affine2D{});
+		color = {1.0f, 1.0f, 1.0f, 1.0f};
+		boundTexture = 0;
+		capturingTexture = 0;
+		captureClipEnabled = false;
 	}
 
 	int CreateTexture(int width, int height)
@@ -420,19 +426,47 @@ public:
 	}
 	bool HasBoundTexture() const { return textures.find(boundTexture) != textures.end(); }
 
-	void RenderToTexture(int textureID, const std::function<void()>& drawFunc)
+	void RenderToTexture(int textureID, const std::function<void()>& drawFunc, bool clear, int clipX, int clipY, int clipW, int clipH)
 	{
 		auto it = textures.find(textureID);
 		if (it == textures.end())
 			return;
 
-		std::fill(it->second.pixels.begin(), it->second.pixels.end(), 0);
-		it->second.texts.clear();
-		it->second.dirty = true;
+		const int clearX0 = std::clamp(clipX, 0, it->second.desc.width);
+		const int clearY0 = std::clamp(clipY, 0, it->second.desc.height);
+		const int clearX1 = std::clamp(clipW >= 0 ? clipX + clipW : it->second.desc.width, 0, it->second.desc.width);
+		const int clearY1 = std::clamp(clipH >= 0 ? clipY + clipH : it->second.desc.height, 0, it->second.desc.height);
+		const bool clipped = (clipW >= 0 && clipH >= 0);
+		if (clear) {
+			if (clipped) {
+				for (int y = clearY0; y < clearY1; ++y) {
+					uint32_t* row = it->second.pixels.data() + y * it->second.desc.width;
+					std::fill(row + clearX0, row + clearX1, 0);
+				}
+				auto& texts = it->second.texts;
+				texts.erase(std::remove_if(texts.begin(), texts.end(), [&](const CapturedText& text) {
+					return text.localX >= clearX0 && text.localX < clearX1 && text.localY >= clearY0 && text.localY < clearY1;
+				}), texts.end());
+			} else {
+				std::fill(it->second.pixels.begin(), it->second.pixels.end(), 0);
+				it->second.texts.clear();
+			}
+			it->second.dirty = true;
+		}
 
 		const int previousCapture = capturingTexture;
 		const auto previousStack = matrixStack;
+		const bool previousCaptureClipEnabled = captureClipEnabled;
+		const int previousCaptureClipX = captureClipX;
+		const int previousCaptureClipY = captureClipY;
+		const int previousCaptureClipW = captureClipW;
+		const int previousCaptureClipH = captureClipH;
 		capturingTexture = textureID;
+		captureClipEnabled = clipped;
+		captureClipX = clearX0;
+		captureClipY = clearY0;
+		captureClipW = std::max(0, clearX1 - clearX0);
+		captureClipH = std::max(0, clearY1 - clearY0);
 		matrixStack.clear();
 		matrixStack.push_back(Affine2D{});
 
@@ -440,6 +474,11 @@ public:
 
 		matrixStack = previousStack;
 		capturingTexture = previousCapture;
+		captureClipEnabled = previousCaptureClipEnabled;
+		captureClipX = previousCaptureClipX;
+		captureClipY = previousCaptureClipY;
+		captureClipW = previousCaptureClipW;
+		captureClipH = previousCaptureClipH;
 	}
 
 	bool GetCaptureTextureSize(int& width, int& height) const
@@ -683,7 +722,6 @@ public:
 		if (capturingList != 0) {
 			ListCommand command;
 			command.type = ListCommand::Type::Texture;
-			command.textureID = boundTexture;
 			command.x1 = x1;
 			command.y1 = y1;
 			command.x2 = x2;
@@ -790,6 +828,8 @@ private:
 		const auto [clipX2, clipY2] = matrix.Transform(draw.x, draw.y + draw.size);
 		const auto [localX, localY] = ClipToTextureLocal(clipX, clipY, it->second.desc);
 		const auto [localX2, localY2] = ClipToTextureLocal(clipX2, clipY2, it->second.desc);
+		if (captureClipEnabled && !LocalRectIntersectsCaptureClip(localX, localY, localX2, localY2))
+			return;
 
 		CapturedText captured;
 		captured.draw = draw;
@@ -810,6 +850,8 @@ private:
 		const auto [clipX2, clipY2] = matrix.Transform(rect.x2, rect.y2);
 		const auto [localX1, localY1] = ClipToTextureLocal(clipX1, clipY1, it->second.desc);
 		const auto [localX2, localY2] = ClipToTextureLocal(clipX2, clipY2, it->second.desc);
+		if (captureClipEnabled && !LocalRectIntersectsCaptureClip(localX1, localY1, localX2, localY2))
+			return;
 
 		RasterizeRect(it->second, rect, localX1, localY1, localX2, localY2);
 	}
@@ -829,8 +871,20 @@ private:
 		const auto [clipX2, clipY2] = matrix.Transform(x2, y2);
 		const auto [localX1, localY1] = ClipToTextureLocal(clipX1, clipY1, it->second.desc);
 		const auto [localX2, localY2] = ClipToTextureLocal(clipX2, clipY2, it->second.desc);
+		if (captureClipEnabled && !LocalRectIntersectsCaptureClip(localX1, localY1, localX2, localY2))
+			return;
 
 		RasterizeTextureRect(it->second, source, localX1, localY1, localX2, localY2, u1, v1, u2, v2);
+	}
+
+	bool LocalRectIntersectsCaptureClip(float x1, float y1, float x2, float y2) const
+	{
+		const float minX = std::min(x1, x2);
+		const float maxX = std::max(x1, x2);
+		const float minY = std::min(y1, y2);
+		const float maxY = std::max(y1, y2);
+		return maxX >= captureClipX && minX <= captureClipX + captureClipW &&
+		       maxY >= captureClipY && minY <= captureClipY + captureClipH;
 	}
 
 	static uint32_t PackColor(const float* color)
@@ -881,10 +935,11 @@ private:
 		if (texture.pixels.empty())
 			return;
 
-		const int x0 = std::clamp(int(std::floor(std::min(localX1, localX2))), 0, texture.desc.width);
-		const int x1 = std::clamp(int(std::ceil (std::max(localX1, localX2))), 0, texture.desc.width);
-		const int y0 = std::clamp(int(std::floor(std::min(localY1, localY2))), 0, texture.desc.height);
-		const int y1 = std::clamp(int(std::ceil (std::max(localY1, localY2))), 0, texture.desc.height);
+		int x0 = std::clamp(int(std::floor(std::min(localX1, localX2))), 0, texture.desc.width);
+		int x1 = std::clamp(int(std::ceil (std::max(localX1, localX2))), 0, texture.desc.width);
+		int y0 = std::clamp(int(std::floor(std::min(localY1, localY2))), 0, texture.desc.height);
+		int y1 = std::clamp(int(std::ceil (std::max(localY1, localY2))), 0, texture.desc.height);
+		ApplyCaptureClip(x0, y0, x1, y1);
 		if (x0 >= x1 || y0 >= y1)
 			return;
 
@@ -907,10 +962,11 @@ private:
 		const float maxX = std::max(localX1, localX2);
 		const float minY = std::min(localY1, localY2);
 		const float maxY = std::max(localY1, localY2);
-		const int x0 = std::clamp(int(std::floor(minX)), 0, target.desc.width);
-		const int x1 = std::clamp(int(std::ceil (maxX)), 0, target.desc.width);
-		const int y0 = std::clamp(int(std::floor(minY)), 0, target.desc.height);
-		const int y1 = std::clamp(int(std::ceil (maxY)), 0, target.desc.height);
+		int x0 = std::clamp(int(std::floor(minX)), 0, target.desc.width);
+		int x1 = std::clamp(int(std::ceil (maxX)), 0, target.desc.width);
+		int y0 = std::clamp(int(std::floor(minY)), 0, target.desc.height);
+		int y1 = std::clamp(int(std::ceil (maxY)), 0, target.desc.height);
+		ApplyCaptureClip(x0, y0, x1, y1);
 		if (x0 >= x1 || y0 >= y1)
 			return;
 
@@ -929,6 +985,17 @@ private:
 			}
 		}
 		target.dirty = true;
+	}
+
+	void ApplyCaptureClip(int& x0, int& y0, int& x1, int& y1) const
+	{
+		if (!captureClipEnabled)
+			return;
+
+		x0 = std::max(x0, captureClipX);
+		y0 = std::max(y0, captureClipY);
+		x1 = std::min(x1, captureClipX + captureClipW);
+		y1 = std::min(y1, captureClipY + captureClipH);
 	}
 
 	void DrawTextScreen(const LuaUITextDraw& draw, float maxX)
@@ -1122,7 +1189,12 @@ private:
 	int scissorY = 0;
 	int scissorW = 0;
 	int scissorH = 0;
+	int captureClipX = 0;
+	int captureClipY = 0;
+	int captureClipW = 0;
+	int captureClipH = 0;
 	bool scissorEnabled = false;
+	bool captureClipEnabled = false;
 	bool blendEnabled = true;
 	bool valid = false;
 };
@@ -1146,7 +1218,7 @@ namespace MetalLuaUI
 	void BindNamedTexture(const std::string& name) { GetRenderer().BindNamedTexture(name); }
 	void UnbindTexture() { GetRenderer().UnbindTexture(); }
 	bool HasBoundTexture() { return GetRenderer().HasBoundTexture(); }
-	void RenderToTexture(int textureID, const std::function<void()>& drawFunc) { GetRenderer().RenderToTexture(textureID, drawFunc); }
+	void RenderToTexture(int textureID, const std::function<void()>& drawFunc, bool clear, int clipX, int clipY, int clipW, int clipH) { GetRenderer().RenderToTexture(textureID, drawFunc, clear, clipX, clipY, clipW, clipH); }
 	bool GetCaptureTextureSize(int& width, int& height) { return GetRenderer().GetCaptureTextureSize(width, height); }
 	int CreateList(const std::function<void()>& drawFunc) { return GetRenderer().CreateList(drawFunc); }
 	void DeleteList(int listID) { GetRenderer().DeleteList(listID); }

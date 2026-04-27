@@ -32,6 +32,7 @@ namespace MetalLuaUI
 	void LoadIdentity();
 	void Ortho(float left, float right, float bottom, float top, float zNear = -1.0f, float zFar = 1.0f);
 	void Translate(float x, float y, float z = 0.0f);
+	void Rotate(float degrees, float x = 0.0f, float y = 0.0f, float z = 1.0f);
 	void Scale(float x, float y, float z = 1.0f);
 
 	void SetScissor(bool enabled, int x = 0, int y = 0, int width = 0, int height = 0);

@@ -51,6 +51,22 @@ struct Affine2D {
 		a *= x; b *= x;
 		c *= y; d *= y;
 	}
+
+	void PostRotate(float degrees)
+	{
+		constexpr float degToRad = 3.14159265358979323846f / 180.0f;
+		const float radians = degrees * degToRad;
+		const float sinAngle = std::sin(radians);
+		const float cosAngle = std::cos(radians);
+		const float nextA = a * cosAngle + c * sinAngle;
+		const float nextB = b * cosAngle + d * sinAngle;
+		const float nextC = c * cosAngle - a * sinAngle;
+		const float nextD = d * cosAngle - b * sinAngle;
+		a = nextA;
+		b = nextB;
+		c = nextC;
+		d = nextD;
+	}
 };
 
 struct CapturedText {
@@ -80,6 +96,7 @@ struct ListCommand {
 		LoadIdentity,
 		Ortho,
 		Translate,
+		Rotate,
 		Scale,
 	};
 
@@ -512,6 +529,9 @@ public:
 				case ListCommand::Type::Translate: {
 					Translate(command.x1, command.y1);
 				} break;
+				case ListCommand::Type::Rotate: {
+					Rotate(command.x1);
+				} break;
 				case ListCommand::Type::Scale: {
 					Scale(command.x1, command.y1);
 				} break;
@@ -566,6 +586,12 @@ public:
 	{
 		RecordMatrixCommand(ListCommand::Type::Scale, x, y, 0.0f, 0.0f);
 		CurrentMatrix().PostScale(x, y);
+	}
+
+	void Rotate(float degrees)
+	{
+		RecordMatrixCommand(ListCommand::Type::Rotate, degrees, 0.0f, 0.0f, 0.0f);
+		CurrentMatrix().PostRotate(degrees);
 	}
 
 	void SetColor(float r, float g, float b, float a)
@@ -637,7 +663,14 @@ public:
 			return;
 		}
 
-		DrawRectScreen(rect);
+		const auto matrix = CurrentMatrix();
+		DrawRectScreenQuad(
+			rect,
+			matrix.Transform(x1, y1),
+			matrix.Transform(x2, y1),
+			matrix.Transform(x1, y2),
+			matrix.Transform(x2, y2)
+		);
 	}
 
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2)
@@ -675,16 +708,18 @@ public:
 		}
 
 		const auto matrix = CurrentMatrix();
-		const auto [tx1, ty1] = matrix.Transform(x1, y1);
-		const auto [tx2, ty2] = matrix.Transform(x2, y2);
-		DrawTextureScreen(texture, tx1, ty1, tx2, ty2, u1, v1, u2, v2);
+		const auto p00 = matrix.Transform(x1, y1);
+		const auto p10 = matrix.Transform(x2, y1);
+		const auto p01 = matrix.Transform(x1, y2);
+		const auto p11 = matrix.Transform(x2, y2);
+		DrawTextureScreenQuad(texture, p00, p10, p01, p11, u1, v1, u2, v2);
 
 		for (const CapturedText& text: texture.texts) {
 			LuaUITextDraw draw = text.draw;
-			draw.x = tx1 + (text.localX / texture.desc.width) * (tx2 - tx1);
-			draw.y = ty1 + (text.localY / texture.desc.height) * (ty2 - ty1);
-			draw.size = text.localSize * ((ty2 - ty1) / texture.desc.height);
-			DrawTextScreen(draw, tx2);
+			draw.x = p00.first + (text.localX / texture.desc.width) * (p11.first - p00.first);
+			draw.y = p00.second + (text.localY / texture.desc.height) * (p11.second - p00.second);
+			draw.size = text.localSize * ((p11.second - p00.second) / texture.desc.height);
+			DrawTextScreen(draw, p11.first);
 		}
 	}
 
@@ -937,6 +972,21 @@ private:
 
 	void DrawRectScreen(const LuaUIRectDraw& rect)
 	{
+		DrawRectScreenQuad(
+			rect,
+			{rect.x1, rect.y1},
+			{rect.x2, rect.y1},
+			{rect.x1, rect.y2},
+			{rect.x2, rect.y2}
+		);
+	}
+
+	void DrawRectScreenQuad(const LuaUIRectDraw& rect,
+	                        const std::pair<float, float>& p00,
+	                        const std::pair<float, float>& p10,
+	                        const std::pair<float, float>& p01,
+	                        const std::pair<float, float>& p11)
+	{
 		if (!valid || globalRendering == nullptr)
 			return;
 		if (!ApplyScissor())
@@ -948,16 +998,18 @@ private:
 			return std::pair<float, float>{x / viewSizeX * 2.0f - 1.0f, y / viewSizeY * 2.0f - 1.0f};
 		};
 
-		const auto [x0, y0] = ndc(rect.x1, rect.y1);
-		const auto [x1, y1] = ndc(rect.x2, rect.y2);
+		const auto [x00, y00] = ndc(p00.first, p00.second);
+		const auto [x10, y10] = ndc(p10.first, p10.second);
+		const auto [x01, y01] = ndc(p01.first, p01.second);
+		const auto [x11, y11] = ndc(p11.first, p11.second);
 		const float alpha = blendEnabled ? rect.color[3] : 1.0f;
 		RectVertex verts[6] = {
-			{{x0, y0}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
-			{{x1, y0}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
-			{{x0, y1}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
-			{{x0, y1}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
-			{{x1, y0}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
-			{{x1, y1}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
+			{{x00, y00}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
+			{{x10, y10}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
+			{{x01, y01}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
+			{{x01, y01}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
+			{{x10, y10}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
+			{{x11, y11}, {rect.color[0], rect.color[1], rect.color[2], alpha}},
 		};
 
 		rectVertexBuffer->UpdateData(verts, sizeof(verts), 0);
@@ -969,6 +1021,23 @@ private:
 
 	void DrawTextureScreen(const TextureCommandBuffer& texture, float x1, float y1, float x2, float y2,
 	                       float u1, float v1, float u2, float v2)
+	{
+		DrawTextureScreenQuad(
+			texture,
+			{x1, y1},
+			{x2, y1},
+			{x1, y2},
+			{x2, y2},
+			u1, v1, u2, v2
+		);
+	}
+
+	void DrawTextureScreenQuad(const TextureCommandBuffer& texture,
+	                           const std::pair<float, float>& p00,
+	                           const std::pair<float, float>& p10,
+	                           const std::pair<float, float>& p01,
+	                           const std::pair<float, float>& p11,
+	                           float u1, float v1, float u2, float v2)
 	{
 		if (!valid || globalRendering == nullptr || texture.texture == nullptr || !texture.texture->IsValid())
 			return;
@@ -984,17 +1053,19 @@ private:
 			return std::pair<float, float>{x / viewSizeX * 2.0f - 1.0f, y / viewSizeY * 2.0f - 1.0f};
 		};
 
-		const auto [nx0, ny0] = ndc(x1, y1);
-		const auto [nx1, ny1] = ndc(x2, y2);
+		const auto [nx00, ny00] = ndc(p00.first, p00.second);
+		const auto [nx10, ny10] = ndc(p10.first, p10.second);
+		const auto [nx01, ny01] = ndc(p01.first, p01.second);
+		const auto [nx11, ny11] = ndc(p11.first, p11.second);
 		const float alpha = blendEnabled ? color[3] : 1.0f;
 		const float tint[4] = {color[0], color[1], color[2], alpha};
 		TextureVertex verts[6] = {
-			{{nx0, ny0}, {u1, v1}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx1, ny0}, {u2, v1}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx0, ny1}, {u1, v2}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx0, ny1}, {u1, v2}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx1, ny0}, {u2, v1}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx1, ny1}, {u2, v2}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx00, ny00}, {u1, v1}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx10, ny10}, {u2, v1}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx01, ny01}, {u1, v2}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx01, ny01}, {u1, v2}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx10, ny10}, {u2, v1}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{nx11, ny11}, {u2, v2}, {tint[0], tint[1], tint[2], tint[3]}},
 		};
 
 		textureVertexBuffer->UpdateData(verts, sizeof(verts), 0);
@@ -1085,6 +1156,7 @@ namespace MetalLuaUI
 	void LoadIdentity() { GetRenderer().LoadIdentity(); }
 	void Ortho(float left, float right, float bottom, float top, float, float) { GetRenderer().Ortho(left, right, bottom, top); }
 	void Translate(float x, float y, float) { GetRenderer().Translate(x, y); }
+	void Rotate(float degrees, float, float, float) { GetRenderer().Rotate(degrees); }
 	void Scale(float x, float y, float) { GetRenderer().Scale(x, y); }
 	void SetScissor(bool enabled, int x, int y, int width, int height) { GetRenderer().SetScissor(enabled, x, y, width, height); }
 	void SetBlending(bool enabled) { GetRenderer().SetBlending(enabled); }

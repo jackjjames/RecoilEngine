@@ -948,6 +948,17 @@ static int MetalLuaGL_Translate(lua_State* L)
 	return 0;
 }
 
+static int MetalLuaGL_Rotate(lua_State* L)
+{
+	MetalLuaUI::Rotate(
+		luaL_optnumber(L, 1, 0.0f),
+		luaL_optnumber(L, 2, 0.0f),
+		luaL_optnumber(L, 3, 0.0f),
+		luaL_optnumber(L, 4, 1.0f)
+	);
+	return 0;
+}
+
 static int MetalLuaGL_Scale(lua_State* L)
 {
 	MetalLuaUI::Scale(
@@ -1249,6 +1260,7 @@ bool LuaOpenGL::PushEntries(lua_State* L)
 	LuaPushRawNamedCFunc(L, "PushMatrix", MetalLuaGL_PushMatrix);
 	LuaPushRawNamedCFunc(L, "PopMatrix", MetalLuaGL_PopMatrix);
 	LuaPushRawNamedCFunc(L, "Translate", MetalLuaGL_Translate);
+	LuaPushRawNamedCFunc(L, "Rotate", MetalLuaGL_Rotate);
 	LuaPushRawNamedCFunc(L, "Scale", MetalLuaGL_Scale);
 	LuaPushRawNamedCFunc(L, "CreateList", MetalLuaGL_CreateList);
 	LuaPushRawNamedCFunc(L, "CallList", MetalLuaGL_CallList);

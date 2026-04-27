@@ -1130,21 +1130,37 @@ private:
 		float ndcX = normX * 2.0f - 1.0f;
 		float ndcTop = normY * 2.0f - 1.0f + glyphH;
 
-		if (draw.options & (FONT_CENTER | FONT_RIGHT)) {
-			const float aspect = globalRendering->aspectRatio > 0.0f ? globalRendering->aspectRatio : 1.0f;
-			const float textWidth = glyphH * (5.0f / 7.0f) * 1.2f * float(draw.text.size()) / aspect;
-			if (draw.options & FONT_CENTER)
-				ndcX -= textWidth * 0.5f;
-			else if (draw.options & FONT_RIGHT)
-				ndcX -= textWidth;
+		// Pixel width of the text as the LuaUI widget computed positions for it.
+		// Prefer real CglFont metrics so 'c'/'r' alignment and button-width
+		// layouts (which compute via GetTextWidth/Print) line up with what
+		// our overlay actually rasterizes.
+		float textPx = 0.0f;
+		// draw.text was already color-stripped by DrawText() before reaching us.
+		if (font != nullptr)
+			textPx = font->GetTextWidth(draw.text) * size;
+		if (textPx <= 0.0f) {
+			// Fallback advance ratio close to a real proportional font.
+			textPx = size * 0.5f * float(draw.text.size());
 		}
+		const float textNDC = (textPx / viewSizeX) * 2.0f;
+
+		if (draw.options & FONT_CENTER)
+			ndcX -= textNDC * 0.5f;
+		else if (draw.options & FONT_RIGHT)
+			ndcX -= textNDC;
 
 		if (draw.options & FONT_TOP)
 			ndcTop = normY * 2.0f - 1.0f;
 		else if (draw.options & FONT_VCENTER)
 			ndcTop = normY * 2.0f - 1.0f + glyphH * 0.5f;
 
-		const float ndcMaxX = (maxX / viewSizeX) * 2.0f - 1.0f;
+		// Tell the overlay's auto-shrink to fit each line into the real font
+		// width when that is tighter than `maxX`. Without this, our overlay's
+		// fat-glyph advance bleeds neighbouring labels into each other.
+		const float ndcMaxX = std::min(
+			(maxX / viewSizeX) * 2.0f - 1.0f,
+			ndcX + textNDC
+		);
 		textOverlay->DrawLine(ndcX, ndcTop, glyphH, draw.text, ndcMaxX);
 	}
 

@@ -564,6 +564,8 @@ static int MetalLuaGL_Rect(lua_State* L)
 	return 0;
 }
 
+static void MetalLuaGL_SetImmediateColor(const float* color);
+
 static int MetalLuaGL_Color(lua_State* L)
 {
 	float colorValues[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -584,6 +586,203 @@ static int MetalLuaGL_Color(lua_State* L)
 		colorValues[2],
 		colorValues[3]
 	);
+	MetalLuaGL_SetImmediateColor(colorValues);
+	return 0;
+}
+
+struct MetalLuaImmediateVertex {
+	float x = 0.0f;
+	float y = 0.0f;
+	float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+};
+
+static std::vector<MetalLuaImmediateVertex>& MetalLuaImmediateVertices()
+{
+	static std::vector<MetalLuaImmediateVertex> vertices;
+	return vertices;
+}
+
+static float* MetalLuaImmediateColor()
+{
+	static float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+	return color;
+}
+
+static bool& MetalLuaImmediateCapturing()
+{
+	static bool capturing = false;
+	return capturing;
+}
+
+static bool MetalLuaGL_ShouldCaptureImmediate()
+{
+	int width = 0;
+	int height = 0;
+	if (!MetalLuaUI::GetCaptureTextureSize(width, height))
+		return false;
+
+	return (width <= 900 && height >= 100 && height <= 500);
+}
+
+static void MetalLuaGL_SetImmediateColor(const float* color)
+{
+	std::copy(color, color + 4, MetalLuaImmediateColor());
+}
+
+static void MetalLuaGL_DrawCapturedRect(const std::vector<MetalLuaImmediateVertex>& vertices, size_t first, size_t count)
+{
+	if (first >= vertices.size() || count == 0)
+		return;
+
+	const size_t end = std::min(vertices.size(), first + count);
+	float x1 = vertices[first].x;
+	float y1 = vertices[first].y;
+	float x2 = vertices[first].x;
+	float y2 = vertices[first].y;
+	float color[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+	for (size_t i = first; i < end; ++i) {
+		x1 = std::min(x1, vertices[i].x);
+		y1 = std::min(y1, vertices[i].y);
+		x2 = std::max(x2, vertices[i].x);
+		y2 = std::max(y2, vertices[i].y);
+		color[0] += vertices[i].color[0];
+		color[1] += vertices[i].color[1];
+		color[2] += vertices[i].color[2];
+		color[3] = std::max(color[3], vertices[i].color[3]);
+	}
+
+	const float invCount = 1.0f / float(end - first);
+	MetalLuaUI::SetColor(color[0] * invCount, color[1] * invCount, color[2] * invCount, color[3]);
+	MetalLuaUI::DrawRect(x1, y1, x2, y2);
+}
+
+static int MetalLuaGL_Vertex(lua_State* L)
+{
+	if (!MetalLuaImmediateCapturing())
+		return 0;
+
+	float x = 0.0f;
+	float y = 0.0f;
+	if (lua_gettop(L) == 1 && lua_istable(L, 1)) {
+		lua_rawgeti(L, 1, 1);
+		x = luaL_checkfloat(L, -1);
+		lua_rawgeti(L, 1, 2);
+		y = luaL_checkfloat(L, -1);
+		lua_pop(L, 2);
+	} else {
+		x = luaL_checkfloat(L, 1);
+		y = luaL_checkfloat(L, 2);
+	}
+
+	auto* color = MetalLuaImmediateColor();
+	MetalLuaImmediateVertices().push_back({x, y, {color[0], color[1], color[2], color[3]}});
+	return 0;
+}
+
+static int MetalLuaGL_TexCoord(lua_State*)
+{
+	return 0;
+}
+
+static int MetalLuaGL_BeginEnd(lua_State* L)
+{
+	const int args = lua_gettop(L);
+	if ((args < 2) || !lua_isfunction(L, 2))
+		luaL_error(L, "Incorrect arguments to gl.BeginEnd(type, func, ...)");
+	if (!MetalLuaGL_ShouldCaptureImmediate())
+		return 0;
+
+	const int primMode = luaL_checkint(L, 1);
+	auto& vertices = MetalLuaImmediateVertices();
+	vertices.clear();
+
+	const bool previousCapturing = MetalLuaImmediateCapturing();
+	MetalLuaImmediateCapturing() = (primMode == GL_QUADS);
+	lua_pushvalue(L, 2);
+	for (int arg = 3; arg <= args; ++arg)
+		lua_pushvalue(L, arg);
+	const int error = lua_pcall(L, args - 2, 0, 0);
+	MetalLuaImmediateCapturing() = previousCapturing;
+	if (error != 0)
+		lua_error(L);
+
+	if (primMode == GL_QUADS) {
+		for (size_t i = 0; i + 3 < vertices.size(); i += 4)
+			MetalLuaGL_DrawCapturedRect(vertices, i, 4);
+	}
+	return 0;
+}
+
+static bool MetalLuaGL_ReadVertexTable(lua_State* L, int tableIdx, MetalLuaImmediateVertex& vertex)
+{
+	if (tableIdx < 0)
+		tableIdx = lua_gettop(L) + tableIdx + 1;
+
+	lua_getfield(L, tableIdx, "c");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		lua_getfield(L, tableIdx, "color");
+	}
+	if (lua_istable(L, -1)) {
+		float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+		const int count = LuaUtils::ParseFloatArray(L, -1, color, 4);
+		if (count == 3)
+			color[3] = 1.0f;
+		MetalLuaGL_SetImmediateColor(color);
+	}
+	lua_pop(L, 1);
+
+	lua_getfield(L, tableIdx, "v");
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		lua_getfield(L, tableIdx, "vertex");
+	}
+	if (!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return false;
+	}
+
+	float pos[3] = {0.0f, 0.0f, 0.0f};
+	if (LuaUtils::ParseFloatArray(L, -1, pos, 3) < 2) {
+		lua_pop(L, 1);
+		return false;
+	}
+	lua_pop(L, 1);
+
+	auto* color = MetalLuaImmediateColor();
+	vertex = {pos[0], pos[1], {color[0], color[1], color[2], color[3]}};
+	return true;
+}
+
+static int MetalLuaGL_Shape(lua_State* L)
+{
+	if (!MetalLuaGL_ShouldCaptureImmediate())
+		return 0;
+
+	const int primMode = luaL_checkint(L, 1);
+	luaL_checktype(L, 2, LUA_TTABLE);
+
+	std::vector<MetalLuaImmediateVertex> vertices;
+	for (int i = 1; ; ++i) {
+		lua_rawgeti(L, 2, i);
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 1);
+			break;
+		}
+
+		MetalLuaImmediateVertex vertex;
+		if (MetalLuaGL_ReadVertexTable(L, -1, vertex))
+			vertices.push_back(vertex);
+		lua_pop(L, 1);
+	}
+
+	if (primMode == GL_QUADS) {
+		for (size_t i = 0; i + 3 < vertices.size(); i += 4)
+			MetalLuaGL_DrawCapturedRect(vertices, i, 4);
+	} else if (primMode == GL_TRIANGLE_FAN && vertices.size() >= 3) {
+		MetalLuaGL_DrawCapturedRect(vertices, 0, vertices.size());
+	}
 	return 0;
 }
 
@@ -968,6 +1167,10 @@ bool LuaOpenGL::PushEntries(lua_State* L)
 	LuaPushRawNamedCFunc(L, "Texture", MetalLuaGL_Texture);
 	LuaPushRawNamedCFunc(L, "RenderToTexture", MetalLuaGL_RenderToTexture);
 	LuaPushRawNamedCFunc(L, "TexRect", MetalLuaGL_TexRect);
+	LuaPushRawNamedCFunc(L, "Shape", MetalLuaGL_Shape);
+	LuaPushRawNamedCFunc(L, "BeginEnd", MetalLuaGL_BeginEnd);
+	LuaPushRawNamedCFunc(L, "Vertex", MetalLuaGL_Vertex);
+	LuaPushRawNamedCFunc(L, "TexCoord", MetalLuaGL_TexCoord);
 	LuaPushRawNamedCFunc(L, "LoadFont", MetalLuaGL_LoadFont);
 	LuaPushRawNamedCFunc(L, "DeleteFont", MetalLuaGL_DeleteFont);
 	LuaPushRawNamedCFunc(L, "GetVBO", MetalLuaGL_GetVBO);

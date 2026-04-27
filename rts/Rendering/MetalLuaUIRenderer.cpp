@@ -325,6 +325,20 @@ public:
 		capturingTexture = previousCapture;
 	}
 
+	bool GetCaptureTextureSize(int& width, int& height) const
+	{
+		if (capturingTexture == 0)
+			return false;
+
+		const auto it = textures.find(capturingTexture);
+		if (it == textures.end())
+			return false;
+
+		width = it->second.desc.width;
+		height = it->second.desc.height;
+		return true;
+	}
+
 	int CreateList(const std::function<void()>& drawFunc)
 	{
 		const int listID = nextListID++;
@@ -736,6 +750,7 @@ namespace MetalLuaUI
 	void BindNamedTexture(const std::string& name) { GetRenderer().BindNamedTexture(name); }
 	void UnbindTexture() { GetRenderer().UnbindTexture(); }
 	void RenderToTexture(int textureID, const std::function<void()>& drawFunc) { GetRenderer().RenderToTexture(textureID, drawFunc); }
+	bool GetCaptureTextureSize(int& width, int& height) { return GetRenderer().GetCaptureTextureSize(width, height); }
 	int CreateList(const std::function<void()>& drawFunc) { return GetRenderer().CreateList(drawFunc); }
 	void DeleteList(int listID) { GetRenderer().DeleteList(listID); }
 	void CallList(int listID) { GetRenderer().CallList(listID); }

@@ -914,12 +914,32 @@ static int MetalLuaGL_Blending(lua_State* L)
 
 	if (args == 1 && lua_israwstring(L, 1)) {
 		const char* mode = lua_tostring(L, 1);
-		MetalLuaUI::SetBlending(strcmp(mode, "disable") != 0);
+		switch (hashString(mode)) {
+			case hashString("add"): {
+				MetalLuaUI::SetBlendFunc(GL_ONE, GL_ONE);
+			} break;
+			case hashString("alpha_add"): {
+				MetalLuaUI::SetBlendFunc(GL_SRC_ALPHA, GL_ONE);
+			} break;
+			case hashString("alpha"):
+			case hashString("reset"): {
+				MetalLuaUI::SetBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			} break;
+			case hashString("disable"): {
+				MetalLuaUI::SetBlending(false);
+			} break;
+			default: {
+				MetalLuaUI::SetBlending(true);
+			} break;
+		}
 		return 0;
 	}
 
 	if (args == 2 && lua_isnumber(L, 1) && lua_isnumber(L, 2)) {
-		MetalLuaUI::SetBlending(true);
+		MetalLuaUI::SetBlendFunc(
+			static_cast<uint32_t>(lua_tointeger(L, 1)),
+			static_cast<uint32_t>(lua_tointeger(L, 2))
+		);
 		return 0;
 	}
 
@@ -927,9 +947,23 @@ static int MetalLuaGL_Blending(lua_State* L)
 	return 0;
 }
 
-static int MetalLuaGL_BlendFunc(lua_State*)
+static int MetalLuaGL_BlendFunc(lua_State* L)
 {
-	MetalLuaUI::SetBlending(true);
+	MetalLuaUI::SetBlendFunc(
+		static_cast<uint32_t>(luaL_checkint(L, 1)),
+		static_cast<uint32_t>(luaL_checkint(L, 2))
+	);
+	return 0;
+}
+
+static int MetalLuaGL_BlendFuncSeparate(lua_State* L)
+{
+	MetalLuaUI::SetBlendFuncSeparate(
+		static_cast<uint32_t>(luaL_checkint(L, 1)),
+		static_cast<uint32_t>(luaL_checkint(L, 2)),
+		static_cast<uint32_t>(luaL_checkint(L, 3)),
+		static_cast<uint32_t>(luaL_checkint(L, 4))
+	);
 	return 0;
 }
 
@@ -1286,6 +1320,7 @@ bool LuaOpenGL::PushEntries(lua_State* L)
 	LuaPushRawNamedCFunc(L, "Scissor", MetalLuaGL_Scissor);
 	LuaPushRawNamedCFunc(L, "Blending", MetalLuaGL_Blending);
 	LuaPushRawNamedCFunc(L, "BlendFunc", MetalLuaGL_BlendFunc);
+	LuaPushRawNamedCFunc(L, "BlendFuncSeparate", MetalLuaGL_BlendFuncSeparate);
 	LuaPushRawNamedCFunc(L, "MatrixMode", MetalLuaGL_MatrixMode);
 	LuaPushRawNamedCFunc(L, "LoadIdentity", MetalLuaGL_LoadIdentity);
 	LuaPushRawNamedCFunc(L, "Ortho", MetalLuaGL_Ortho);

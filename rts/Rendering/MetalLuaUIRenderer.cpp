@@ -264,7 +264,17 @@ public:
 		};
 		textureDesc.blendState = rectDesc.blendState;
 		texturePipeline = backend.CreatePipeline(textureDesc);
-		valid = texturePipeline && texturePipeline->IsValid();
+		textureDesc.name = "lua_ui_texture_premultiplied";
+		textureDesc.blendState = RenderTargetBlendState{
+			.enabled = true,
+			.srcColor = GL_ONE,
+			.dstColor = GL_ONE_MINUS_SRC_ALPHA,
+			.srcAlpha = GL_ONE,
+			.dstAlpha = GL_ONE_MINUS_SRC_ALPHA,
+		};
+		texturePremultipliedPipeline = backend.CreatePipeline(textureDesc);
+		valid = texturePipeline && texturePipeline->IsValid() &&
+		        texturePremultipliedPipeline && texturePremultipliedPipeline->IsValid();
 	}
 
 	void Kill()
@@ -279,7 +289,12 @@ public:
 		namedTextureIDs.clear();
 		scissorEnabled = false;
 		blendEnabled = true;
+		blendSrcColor = GL_SRC_ALPHA;
+		blendDstColor = GL_ONE_MINUS_SRC_ALPHA;
+		blendSrcAlpha = GL_ONE;
+		blendDstAlpha = GL_ONE_MINUS_SRC_ALPHA;
 		texturePipeline.reset();
+		texturePremultipliedPipeline.reset();
 		rectPipeline.reset();
 		textureVertexBuffer.reset();
 		rectVertexBuffer.reset();
@@ -654,6 +669,20 @@ public:
 		blendEnabled = enabled;
 	}
 
+	void SetBlendFunc(uint32_t src, uint32_t dst)
+	{
+		SetBlendFuncSeparate(src, dst, src, dst);
+	}
+
+	void SetBlendFuncSeparate(uint32_t srcColor, uint32_t dstColor, uint32_t srcAlpha, uint32_t dstAlpha)
+	{
+		blendEnabled = true;
+		blendSrcColor = srcColor;
+		blendDstColor = dstColor;
+		blendSrcAlpha = srcAlpha;
+		blendDstAlpha = dstAlpha;
+	}
+
 	void DrawText(LuaUITextDraw draw)
 	{
 		draw.text = StripColorCodes(draw.text);
@@ -955,7 +984,12 @@ private:
 		const uint32_t packed = PackColor(rect.color);
 		for (int y = y0; y < y1; ++y) {
 			uint32_t* row = texture.pixels.data() + y * texture.desc.width;
-			std::fill(row + x0, row + x1, packed);
+			if (!blendEnabled) {
+				std::fill(row + x0, row + x1, packed);
+			} else {
+				for (int x = x0; x < x1; ++x)
+					row[x] = BlendOver(row[x], packed);
+			}
 		}
 		texture.dirty = true;
 	}
@@ -1145,11 +1179,20 @@ private:
 		};
 
 		textureVertexBuffer->UpdateData(verts, sizeof(verts), 0);
-		texturePipeline->Enable();
-		texturePipeline->BindTexture(0, *texture.texture);
-		texturePipeline->BindVertexBuffer(0, *textureVertexBuffer);
-		texturePipeline->Draw(PrimitiveTopology::Triangles, 0, 6);
-		texturePipeline->Disable();
+		IShaderPipeline* pipeline = SelectTexturePipeline();
+		pipeline->Enable();
+		pipeline->BindTexture(0, *texture.texture);
+		pipeline->BindVertexBuffer(0, *textureVertexBuffer);
+		pipeline->Draw(PrimitiveTopology::Triangles, 0, 6);
+		pipeline->Disable();
+	}
+
+	IShaderPipeline* SelectTexturePipeline() const
+	{
+		if (blendEnabled && blendSrcColor == GL_ONE && blendDstColor == GL_ONE_MINUS_SRC_ALPHA)
+			return texturePremultipliedPipeline.get();
+
+		return texturePipeline.get();
 	}
 
 	bool ApplyScissor() const
@@ -1182,6 +1225,7 @@ private:
 	std::unique_ptr<MetalTextOverlay> textOverlay;
 	std::unique_ptr<IShaderPipeline> rectPipeline;
 	std::unique_ptr<IShaderPipeline> texturePipeline;
+	std::unique_ptr<IShaderPipeline> texturePremultipliedPipeline;
 	std::unique_ptr<IBuffer> rectVertexBuffer;
 	std::unique_ptr<IBuffer> textureVertexBuffer;
 	std::unordered_map<int, TextureCommandBuffer> textures;
@@ -1200,6 +1244,10 @@ private:
 	int scissorH = 0;
 	bool scissorEnabled = false;
 	bool blendEnabled = true;
+	uint32_t blendSrcColor = GL_SRC_ALPHA;
+	uint32_t blendDstColor = GL_ONE_MINUS_SRC_ALPHA;
+	uint32_t blendSrcAlpha = GL_ONE;
+	uint32_t blendDstAlpha = GL_ONE_MINUS_SRC_ALPHA;
 	bool valid = false;
 };
 
@@ -1237,6 +1285,8 @@ namespace MetalLuaUI
 	void Scale(float x, float y, float) { GetRenderer().Scale(x, y); }
 	void SetScissor(bool enabled, int x, int y, int width, int height) { GetRenderer().SetScissor(enabled, x, y, width, height); }
 	void SetBlending(bool enabled) { GetRenderer().SetBlending(enabled); }
+	void SetBlendFunc(uint32_t src, uint32_t dst) { GetRenderer().SetBlendFunc(src, dst); }
+	void SetBlendFuncSeparate(uint32_t srcColor, uint32_t dstColor, uint32_t srcAlpha, uint32_t dstAlpha) { GetRenderer().SetBlendFuncSeparate(srcColor, dstColor, srcAlpha, dstAlpha); }
 	void SetColor(float r, float g, float b, float a) { GetRenderer().SetColor(r, g, b, a); }
 	void DrawText(const LuaUITextDraw& text) { GetRenderer().DrawText(text); }
 	void DrawRect(float x1, float y1, float x2, float y2) { GetRenderer().DrawRect(x1, y1, x2, y2); }

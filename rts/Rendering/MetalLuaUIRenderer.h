@@ -4,6 +4,7 @@
 
 #if defined(RENDER_BACKEND_METAL)
 
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -38,6 +39,8 @@ namespace MetalLuaUI
 
 	void SetScissor(bool enabled, int x = 0, int y = 0, int width = 0, int height = 0);
 	void SetBlending(bool enabled);
+	void SetBlendFunc(uint32_t src, uint32_t dst);
+	void SetBlendFuncSeparate(uint32_t srcColor, uint32_t dstColor, uint32_t srcAlpha, uint32_t dstAlpha);
 	void SetColor(float r, float g, float b, float a);
 	void DrawText(const LuaUITextDraw& text);
 	void DrawRect(float x1, float y1, float x2, float y2);

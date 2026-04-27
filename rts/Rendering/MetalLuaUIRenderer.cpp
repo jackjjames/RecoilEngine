@@ -446,15 +446,50 @@ public:
 		if (it == textures.end())
 			return;
 
+		// Real GL switches to a separate FBO with its own viewport / matrix /
+		// scissor scope. Save and restore every Lua-visible draw-state knob
+		// so widget-side gl.Scissor / gl.Color / gl.Blending / gl.Texture
+		// calls inside the capture don't leak onto subsequent screen draws.
 		const int previousCapture = capturingTexture;
+		const int previousList = capturingList;
 		const auto previousStack = matrixStack;
+		const auto previousColor = color;
+		const int previousBoundTexture = boundTexture;
+		const bool previousBlendEnabled = blendEnabled;
+		const uint32_t previousBlendSrcColor = blendSrcColor;
+		const uint32_t previousBlendDstColor = blendDstColor;
+		const uint32_t previousBlendSrcAlpha = blendSrcAlpha;
+		const uint32_t previousBlendDstAlpha = blendDstAlpha;
+		const bool previousScissorEnabled = scissorEnabled;
+		const int previousScissorX = scissorX;
+		const int previousScissorY = scissorY;
+		const int previousScissorW = scissorW;
+		const int previousScissorH = scissorH;
+
 		capturingTexture = textureID;
+		capturingList = 0;
 		matrixStack.clear();
 		matrixStack.push_back(Affine2D{});
+		// Inside the FBO the widget supplies its own scissor coordinates in
+		// texture-local pixels. Reset until the widget enables it explicitly.
+		scissorEnabled = false;
 
 		drawFunc();
 
 		matrixStack = previousStack;
+		color = previousColor;
+		boundTexture = previousBoundTexture;
+		blendEnabled = previousBlendEnabled;
+		blendSrcColor = previousBlendSrcColor;
+		blendDstColor = previousBlendDstColor;
+		blendSrcAlpha = previousBlendSrcAlpha;
+		blendDstAlpha = previousBlendDstAlpha;
+		scissorEnabled = previousScissorEnabled;
+		scissorX = previousScissorX;
+		scissorY = previousScissorY;
+		scissorW = previousScissorW;
+		scissorH = previousScissorH;
+		capturingList = previousList;
 		capturingTexture = previousCapture;
 	}
 

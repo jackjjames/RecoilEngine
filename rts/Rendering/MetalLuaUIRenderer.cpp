@@ -116,6 +116,10 @@ struct ListCommand {
 	float u2 = 1.0f;
 	float v2 = 1.0f;
 	float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+	// Triangle commands keep per-vertex color so feather outlines and
+	// gradient fills (RectRoundOutline / RectRound) interpolate correctly.
+	float color2[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+	float color3[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 struct RectVertex {
@@ -589,10 +593,10 @@ public:
 					color = previousColor;
 				} break;
 				case ListCommand::Type::Triangle: {
-					const auto previousColor = color;
-					std::copy(command.color, command.color + 4, color.begin());
-					DrawTriangle(command.x1, command.y1, command.x2, command.y2, command.x3, command.y3);
-					color = previousColor;
+					DrawTriangleColored(
+						command.x1, command.y1, command.color,
+						command.x2, command.y2, command.color2,
+						command.x3, command.y3, command.color3);
 				} break;
 				case ListCommand::Type::Texture: {
 					const auto previousColor = color;
@@ -785,13 +789,24 @@ public:
 
 	void DrawTriangle(float x1, float y1, float x2, float y2, float x3, float y3)
 	{
+		const float c[4] = {color[0], color[1], color[2], color[3]};
+		DrawTriangleColored(x1, y1, c, x2, y2, c, x3, y3, c);
+	}
+
+	void DrawTriangleColored(
+		float x1, float y1, const float color1[4],
+		float x2, float y2, const float color2[4],
+		float x3, float y3, const float color3[4])
+	{
 		if (capturingList != 0) {
 			ListCommand command;
 			command.type = ListCommand::Type::Triangle;
 			command.x1 = x1; command.y1 = y1;
 			command.x2 = x2; command.y2 = y2;
 			command.x3 = x3; command.y3 = y3;
-			std::copy(color.begin(), color.end(), command.color);
+			std::copy(color1, color1 + 4, command.color);
+			std::copy(color2, color2 + 4, command.color2);
+			std::copy(color3, color3 + 4, command.color3);
 			lists[capturingList].push_back(std::move(command));
 			return;
 		}
@@ -799,7 +814,7 @@ public:
 		if (capturingTexture == 0)
 			return;
 
-		CaptureTriangle(x1, y1, x2, y2, x3, y3);
+		CaptureTriangle(x1, y1, color1, x2, y2, color2, x3, y3, color3);
 	}
 
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2)
@@ -980,7 +995,10 @@ private:
 		RasterizeTextureRect(it->second, source, localX1, localY1, localX2, localY2, u1, v1, u2, v2);
 	}
 
-	void CaptureTriangle(float x1, float y1, float x2, float y2, float x3, float y3)
+	void CaptureTriangle(
+		float x1, float y1, const float color1[4],
+		float x2, float y2, const float color2[4],
+		float x3, float y3, const float color3[4])
 	{
 		auto it = textures.find(capturingTexture);
 		if (it == textures.end())
@@ -994,7 +1012,11 @@ private:
 		const auto [localX2, localY2] = ClipToTextureLocal(clipX2, clipY2, it->second.desc);
 		const auto [localX3, localY3] = ClipToTextureLocal(clipX3, clipY3, it->second.desc);
 
-		RasterizeTriangle(it->second, localX1, localY1, localX2, localY2, localX3, localY3);
+		RasterizeTriangle(
+			it->second,
+			localX1, localY1, color1,
+			localX2, localY2, color2,
+			localX3, localY3, color3);
 	}
 
 	bool LocalRectIntersectsCaptureClip(float x1, float y1, float x2, float y2) const
@@ -1077,7 +1099,9 @@ private:
 	}
 
 	void RasterizeTriangle(TextureCommandBuffer& texture,
-	                       float x1, float y1, float x2, float y2, float x3, float y3)
+	                       float x1, float y1, const float color1[4],
+	                       float x2, float y2, const float color2[4],
+	                       float x3, float y3, const float color3[4])
 	{
 		if (texture.pixels.empty())
 			return;
@@ -1100,20 +1124,49 @@ private:
 		const float area = edge(x1, y1, x2, y2, x3, y3);
 		if (area == 0.0f)
 			return;
+		const float invArea = 1.0f / area;
 
-		const uint32_t packed = PackColor(color.data());
+		// Bake any uniform-color shortcut: skip per-pixel interpolation when
+		// all three vertex colors match (rasterizer hot path for solid fills).
+		const bool uniformColor =
+			color1[0] == color2[0] && color1[0] == color3[0] &&
+			color1[1] == color2[1] && color1[1] == color3[1] &&
+			color1[2] == color2[2] && color1[2] == color3[2] &&
+			color1[3] == color2[3] && color1[3] == color3[3];
+		const uint32_t uniformPacked = uniformColor ? PackColor(color1) : 0u;
+
 		for (int y = y0; y < yEnd; ++y) {
 			uint32_t* row = texture.pixels.data() + y * texture.desc.width;
 			for (int x = x0; x < xEnd; ++x) {
 				const float px = float(x) + 0.5f;
 				const float py = float(y) + 0.5f;
-				const float e1 = edge(x1, y1, x2, y2, px, py);
-				const float e2 = edge(x2, y2, x3, y3, px, py);
-				const float e3 = edge(x3, y3, x1, y1, px, py);
-				if ((area > 0.0f && e1 >= 0.0f && e2 >= 0.0f && e3 >= 0.0f) ||
-				    (area < 0.0f && e1 <= 0.0f && e2 <= 0.0f && e3 <= 0.0f)) {
-					row[x] = blendEnabled ? BlendOver(row[x], packed) : packed;
+				const float e23 = edge(x2, y2, x3, y3, px, py);
+				const float e31 = edge(x3, y3, x1, y1, px, py);
+				const float e12 = edge(x1, y1, x2, y2, px, py);
+				const bool inside =
+					(area > 0.0f && e23 >= 0.0f && e31 >= 0.0f && e12 >= 0.0f) ||
+					(area < 0.0f && e23 <= 0.0f && e31 <= 0.0f && e12 <= 0.0f);
+				if (!inside)
+					continue;
+
+				uint32_t src;
+				if (uniformColor) {
+					src = uniformPacked;
+				} else {
+					// Barycentric weights: w1 weights vertex 1, derived from
+					// the edge opposite to it (e23), etc.
+					const float w1 = e23 * invArea;
+					const float w2 = e31 * invArea;
+					const float w3 = e12 * invArea;
+					const float interp[4] = {
+						color1[0] * w1 + color2[0] * w2 + color3[0] * w3,
+						color1[1] * w1 + color2[1] * w2 + color3[1] * w3,
+						color1[2] * w1 + color2[2] * w2 + color3[2] * w3,
+						color1[3] * w1 + color2[3] * w2 + color3[3] * w3,
+					};
+					src = PackColor(interp);
 				}
+				row[x] = blendEnabled ? BlendOver(row[x], src) : src;
 			}
 		}
 		texture.dirty = true;
@@ -1433,6 +1486,13 @@ namespace MetalLuaUI
 	void DrawText(const LuaUITextDraw& text) { GetRenderer().DrawText(text); }
 	void DrawRect(float x1, float y1, float x2, float y2) { GetRenderer().DrawRect(x1, y1, x2, y2); }
 	void DrawTriangle(float x1, float y1, float x2, float y2, float x3, float y3) { GetRenderer().DrawTriangle(x1, y1, x2, y2, x3, y3); }
+	void DrawTriangleColored(
+		float x1, float y1, const float color1[4],
+		float x2, float y2, const float color2[4],
+		float x3, float y3, const float color3[4])
+	{
+		GetRenderer().DrawTriangleColored(x1, y1, color1, x2, y2, color2, x3, y3, color3);
+	}
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2) { GetRenderer().DrawBoundTextureRect(x1, y1, x2, y2); }
 	void DrawBoundTextureRectUV(float x1, float y1, float x2, float y2, float u1, float v1, float u2, float v2) { GetRenderer().DrawBoundTextureRectUV(x1, y1, x2, y2, u1, v1, u2, v2); }
 }

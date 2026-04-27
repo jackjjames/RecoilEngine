@@ -683,14 +683,39 @@ static void MetalLuaGL_DrawCapturedRect(const std::vector<MetalLuaImmediateVerte
 		return;
 
 	const size_t end = std::min(vertices.size(), first + count);
-	float x1 = vertices[first].x;
-	float y1 = vertices[first].y;
-	float x2 = vertices[first].x;
-	float y2 = vertices[first].y;
-	float u1 = vertices[first].u;
-	float v1 = vertices[first].v;
-	float u2 = vertices[first].u;
-	float v2 = vertices[first].v;
+	if ((end - first) < 4)
+		return;
+
+	const MetalLuaImmediateVertex& v1 = vertices[first + 0];
+	const MetalLuaImmediateVertex& v2 = vertices[first + 1];
+	const MetalLuaImmediateVertex& v3 = vertices[first + 2];
+	const MetalLuaImmediateVertex& v4 = vertices[first + 3];
+
+	// Non-textured quads: decompose into two triangles so per-vertex colors
+	// interpolate across the surface. FlowUI's RectRound (gradient fills) and
+	// RectRoundOutline (feather outlines) emit GL_QUADS where each quad has
+	// two outer/opaque vertices and two inner/transparent vertices; averaging
+	// those into a single rect color collapses the gradient into a solid mid
+	// fill, which paints over the bar background and erases the outline.
+	if (!MetalLuaUI::HasBoundTexture()) {
+		MetalLuaUI::DrawTriangleColored(
+			v1.x, v1.y, v1.color,
+			v2.x, v2.y, v2.color,
+			v3.x, v3.y, v3.color);
+		MetalLuaUI::DrawTriangleColored(
+			v1.x, v1.y, v1.color,
+			v3.x, v3.y, v3.color,
+			v4.x, v4.y, v4.color);
+		return;
+	}
+
+	// Textured quad: keep the AABB-fit path. The Metal rasterizer's textured
+	// path doesn't support per-vertex UVs yet; FlowUI's TexturedRectRound
+	// uses a single uniform color, so averaging is exact for that case.
+	float x1 = v1.x;
+	float y1 = v1.y;
+	float x2 = v1.x;
+	float y2 = v1.y;
 	float color[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
 	for (size_t i = first; i < end; ++i) {
@@ -698,10 +723,6 @@ static void MetalLuaGL_DrawCapturedRect(const std::vector<MetalLuaImmediateVerte
 		y1 = std::min(y1, vertices[i].y);
 		x2 = std::max(x2, vertices[i].x);
 		y2 = std::max(y2, vertices[i].y);
-		u1 = std::min(u1, vertices[i].u);
-		v1 = std::min(v1, vertices[i].v);
-		u2 = std::max(u2, vertices[i].u);
-		v2 = std::max(v2, vertices[i].v);
 		color[0] += vertices[i].color[0];
 		color[1] += vertices[i].color[1];
 		color[2] += vertices[i].color[2];
@@ -709,18 +730,12 @@ static void MetalLuaGL_DrawCapturedRect(const std::vector<MetalLuaImmediateVerte
 	}
 
 	const float invCount = 1.0f / float(end - first);
-	if ((end - first) == 4) {
-		u1 = vertices[first + 0].u;
-		v1 = vertices[first + 0].v;
-		u2 = vertices[first + 2].u;
-		v2 = vertices[first + 2].v;
-	}
+	const float u1 = v1.u;
+	const float vt1 = v1.v;
+	const float u2 = v3.u;
+	const float vt2 = v3.v;
 	MetalLuaUI::SetColor(color[0] * invCount, color[1] * invCount, color[2] * invCount, color[3]);
-	if (MetalLuaUI::HasBoundTexture()) {
-		MetalLuaUI::DrawBoundTextureRectUV(x1, y1, x2, y2, u1, v1, u2, v2);
-	} else {
-		MetalLuaUI::DrawRect(x1, y1, x2, y2);
-	}
+	MetalLuaUI::DrawBoundTextureRectUV(x1, y1, x2, y2, u1, vt1, u2, vt2);
 }
 
 static void MetalLuaGL_DrawCapturedTriangle(const std::vector<MetalLuaImmediateVertex>& vertices, size_t i1, size_t i2, size_t i3)
@@ -728,18 +743,17 @@ static void MetalLuaGL_DrawCapturedTriangle(const std::vector<MetalLuaImmediateV
 	if (i1 >= vertices.size() || i2 >= vertices.size() || i3 >= vertices.size())
 		return;
 
+	// Forward per-vertex colors so feather outlines (RectRoundOutline) and
+	// gradient fills (RectRound colorTop/colorBottom) interpolate correctly
+	// across the rasterized span. Averaging here loses the inner=transparent
+	// outer=opaque alpha gradient and paints the whole triangle solid.
 	const MetalLuaImmediateVertex& v1 = vertices[i1];
 	const MetalLuaImmediateVertex& v2 = vertices[i2];
 	const MetalLuaImmediateVertex& v3 = vertices[i3];
-	float color[4] = {
-		(v1.color[0] + v2.color[0] + v3.color[0]) / 3.0f,
-		(v1.color[1] + v2.color[1] + v3.color[1]) / 3.0f,
-		(v1.color[2] + v2.color[2] + v3.color[2]) / 3.0f,
-		std::max({v1.color[3], v2.color[3], v3.color[3]}),
-	};
-
-	MetalLuaUI::SetColor(color[0], color[1], color[2], color[3]);
-	MetalLuaUI::DrawTriangle(v1.x, v1.y, v2.x, v2.y, v3.x, v3.y);
+	MetalLuaUI::DrawTriangleColored(
+		v1.x, v1.y, v1.color,
+		v2.x, v2.y, v2.color,
+		v3.x, v3.y, v3.color);
 }
 
 static int MetalLuaGL_Vertex(lua_State* L)

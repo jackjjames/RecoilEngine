@@ -48,6 +48,13 @@ namespace MetalLuaUI
 	void DrawText(const LuaUITextDraw& text);
 	void DrawRect(float x1, float y1, float x2, float y2);
 	void DrawTriangle(float x1, float y1, float x2, float y2, float x3, float y3);
+	// Triangle drawn with per-vertex RGBA. Colors interpolate barycentrically
+	// during rasterization so feather outlines (RectRoundOutline) and gradient
+	// fills (RectRound with colorTop / colorBottom) reproduce correctly.
+	void DrawTriangleColored(
+		float x1, float y1, const float color1[4],
+		float x2, float y2, const float color2[4],
+		float x3, float y3, const float color3[4]);
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2);
 	void DrawBoundTextureRectUV(float x1, float y1, float x2, float y2, float u1, float v1, float u2, float v2);
 }

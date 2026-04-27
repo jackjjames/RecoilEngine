@@ -88,6 +88,7 @@ struct ListCommand {
 	enum class Type {
 		Text,
 		Rect,
+		Triangle,
 		Texture,
 		BindTexture,
 		Color,
@@ -108,6 +109,8 @@ struct ListCommand {
 	float y1 = 0.0f;
 	float x2 = 0.0f;
 	float y2 = 0.0f;
+	float x3 = 0.0f;
+	float y3 = 0.0f;
 	float u1 = 0.0f;
 	float v1 = 0.0f;
 	float u2 = 1.0f;
@@ -541,6 +544,8 @@ public:
 		return true;
 	}
 
+	bool IsCapturing() const { return capturingTexture != 0 || capturingList != 0; }
+
 	int CreateList(const std::function<void()>& drawFunc)
 	{
 		const int listID = nextListID++;
@@ -581,6 +586,12 @@ public:
 					const auto previousColor = color;
 					std::copy(command.rect.color, command.rect.color + 4, color.begin());
 					DrawRect(command.rect.x1, command.rect.y1, command.rect.x2, command.rect.y2);
+					color = previousColor;
+				} break;
+				case ListCommand::Type::Triangle: {
+					const auto previousColor = color;
+					std::copy(command.color, command.color + 4, color.begin());
+					DrawTriangle(command.x1, command.y1, command.x2, command.y2, command.x3, command.y3);
 					color = previousColor;
 				} break;
 				case ListCommand::Type::Texture: {
@@ -774,6 +785,17 @@ public:
 
 	void DrawTriangle(float x1, float y1, float x2, float y2, float x3, float y3)
 	{
+		if (capturingList != 0) {
+			ListCommand command;
+			command.type = ListCommand::Type::Triangle;
+			command.x1 = x1; command.y1 = y1;
+			command.x2 = x2; command.y2 = y2;
+			command.x3 = x3; command.y3 = y3;
+			std::copy(color.begin(), color.end(), command.color);
+			lists[capturingList].push_back(std::move(command));
+			return;
+		}
+
 		if (capturingTexture == 0)
 			return;
 
@@ -1392,6 +1414,7 @@ namespace MetalLuaUI
 	void RenderToTexture(int textureID, const std::function<void()>& drawFunc) { GetRenderer().RenderToTexture(textureID, drawFunc); }
 	void Clear(float r, float g, float b, float a) { GetRenderer().Clear(r, g, b, a); }
 	bool GetCaptureTextureSize(int& width, int& height) { return GetRenderer().GetCaptureTextureSize(width, height); }
+	bool IsCapturing() { return GetRenderer().IsCapturing(); }
 	int CreateList(const std::function<void()>& drawFunc) { return GetRenderer().CreateList(drawFunc); }
 	void DeleteList(int listID) { GetRenderer().DeleteList(listID); }
 	void CallList(int listID) { GetRenderer().CallList(listID); }

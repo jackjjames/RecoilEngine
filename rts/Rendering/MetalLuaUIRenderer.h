@@ -25,6 +25,9 @@ namespace MetalLuaUI
 	void RenderToTexture(int textureID, const std::function<void()>& drawFunc);
 	void Clear(float r, float g, float b, float a);
 	bool GetCaptureTextureSize(int& width, int& height);
+	// True while inside gl.RenderToTexture or gl.CreateList; immediate-mode
+	// geometry (gl.BeginEnd, gl.Shape) must be captured into the active target.
+	bool IsCapturing();
 	int CreateList(const std::function<void()>& drawFunc);
 	void DeleteList(int listID);
 	void CallList(int listID);

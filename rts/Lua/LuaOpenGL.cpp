@@ -664,11 +664,12 @@ static bool& MetalLuaImmediateCapturing()
 
 static bool MetalLuaGL_ShouldCaptureImmediate()
 {
-	// Capture immediate-mode geometry whenever a LuaUI R2T target is bound.
-	// The previous size window dropped the BAR top bar (full screen width, ~50 px tall) silently.
-	int width = 0;
-	int height = 0;
-	return MetalLuaUI::GetCaptureTextureSize(width, height);
+	// Capture immediate-mode geometry both when a LuaUI R2T target is bound and
+	// while a display list is being recorded. BAR widgets (e.g. the top bar)
+	// build display lists outside R2T and replay them inside R2T later, so the
+	// list-creation pass must capture FlowUI's RectRound / TexturedRectRound
+	// triangle strips or the cached panels render empty.
+	return MetalLuaUI::IsCapturing();
 }
 
 static void MetalLuaGL_SetImmediateColor(const float* color)

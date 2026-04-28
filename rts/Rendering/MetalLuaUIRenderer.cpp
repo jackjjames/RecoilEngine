@@ -81,7 +81,9 @@ struct TextureCommandBuffer {
 	std::unique_ptr<ITexture> texture;
 	std::vector<uint32_t> pixels;
 	std::vector<CapturedText> texts;
-	bool dirty = false;
+	// Cache flag toggled by the lazy GPU upload in DrawTextureScreenQuad,
+	// hence mutable.
+	mutable bool dirty = false;
 };
 
 struct ListCommand {
@@ -811,10 +813,19 @@ public:
 			return;
 		}
 
-		if (capturingTexture == 0)
+		if (capturingTexture != 0) {
+			CaptureTriangle(x1, y1, color1, x2, y2, color2, x3, y3, color3);
 			return;
+		}
 
-		CaptureTriangle(x1, y1, color1, x2, y2, color2, x3, y3, color3);
+		// Direct screen-render path: replayed display lists (wind dial, com
+		// counter, etc.) emit triangles outside any capture; without this the
+		// rect pipeline never sees them and the icons render empty.
+		const auto matrix = CurrentMatrix();
+		DrawTriangleScreen(
+			matrix.Transform(x1, y1), color1,
+			matrix.Transform(x2, y2), color2,
+			matrix.Transform(x3, y3), color3);
 	}
 
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2)
@@ -1323,6 +1334,40 @@ private:
 		rectPipeline->Disable();
 	}
 
+	void DrawTriangleScreen(const std::pair<float, float>& p1, const float color1[4],
+	                        const std::pair<float, float>& p2, const float color2[4],
+	                        const std::pair<float, float>& p3, const float color3[4])
+	{
+		if (!valid || globalRendering == nullptr)
+			return;
+		if (!ApplyScissor())
+			return;
+
+		const float viewSizeX = std::max(1.0f, float(globalRendering->viewSizeX));
+		const float viewSizeY = std::max(1.0f, float(globalRendering->viewSizeY));
+		const auto ndc = [&](float x, float y) {
+			return std::pair<float, float>{x / viewSizeX * 2.0f - 1.0f, y / viewSizeY * 2.0f - 1.0f};
+		};
+
+		const auto [x1, y1] = ndc(p1.first, p1.second);
+		const auto [x2, y2] = ndc(p2.first, p2.second);
+		const auto [x3, y3] = ndc(p3.first, p3.second);
+		const auto pickAlpha = [&](const float c[4]) {
+			return blendEnabled ? c[3] : 1.0f;
+		};
+		RectVertex verts[3] = {
+			{{x1, y1}, {color1[0], color1[1], color1[2], pickAlpha(color1)}},
+			{{x2, y2}, {color2[0], color2[1], color2[2], pickAlpha(color2)}},
+			{{x3, y3}, {color3[0], color3[1], color3[2], pickAlpha(color3)}},
+		};
+
+		rectVertexBuffer->UpdateData(verts, sizeof(verts), 0);
+		rectPipeline->Enable();
+		rectPipeline->BindVertexBuffer(0, *rectVertexBuffer);
+		rectPipeline->Draw(PrimitiveTopology::Triangles, 0, 3);
+		rectPipeline->Disable();
+	}
+
 	void DrawTextureScreen(const TextureCommandBuffer& texture, float x1, float y1, float x2, float y2,
 	                       float u1, float v1, float u2, float v2)
 	{
@@ -1348,8 +1393,10 @@ private:
 		if (!ApplyScissor())
 			return;
 
-		if (texture.dirty)
+		if (texture.dirty) {
 			texture.texture->UploadImage(texture.pixels.data());
+			texture.dirty = false;
+		}
 
 		const float viewSizeX = std::max(1.0f, float(globalRendering->viewSizeX));
 		const float viewSizeY = std::max(1.0f, float(globalRendering->viewSizeY));

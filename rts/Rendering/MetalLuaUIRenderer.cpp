@@ -378,19 +378,22 @@ public:
 		texture.pixels.resize(pxCount);
 
 		const uint8_t* src = bitmap.GetRawMem();
-		const int ch = bitmap.channels;
-		const uint32_t dtSize = bitmap.GetDataTypeSize();
+		const size_t memSize = bitmap.GetMemSize();
+		// DevIL may leave `dataType` as IL_* values; GL::GetDataTypeSize only knows GL_* enums.
+		// Derive bytes-per-pixel from the allocated slab so RGBA LuaUI icons still populate
+		// `pixels` for software R2T (otherwise RasterizeTextureRect sees empty source → no icons).
+		const size_t bpp = (src != nullptr && pxCount > 0 && memSize >= pxCount) ? (memSize / pxCount) : 0;
 
-		if (src != nullptr && dtSize == 1 && ch == 4) {
+		if (bpp == 4) {
 			std::memcpy(texture.pixels.data(), src, pxCount * 4);
-		} else if (src != nullptr && dtSize == 1 && ch == 3) {
+		} else if (bpp == 3) {
 			const uint8_t* p = src;
 			uint32_t* dst = texture.pixels.data();
 			for (size_t i = 0; i < pxCount; ++i) {
 				dst[i] = uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (255u << 24);
 				p += 3;
 			}
-		} else if (src != nullptr && dtSize == 1 && ch == 2) {
+		} else if (bpp == 2) {
 			const uint8_t* p = src;
 			uint32_t* dst = texture.pixels.data();
 			for (size_t i = 0; i < pxCount; ++i) {
@@ -399,13 +402,23 @@ public:
 				dst[i] = uint32_t(lum) | (uint32_t(lum) << 8) | (uint32_t(lum) << 16) | (uint32_t(a) << 24);
 				p += 2;
 			}
-		} else if (src != nullptr && dtSize == 1 && ch == 1) {
+		} else if (bpp == 1) {
 			const uint8_t* p = src;
 			uint32_t* dst = texture.pixels.data();
 			for (size_t i = 0; i < pxCount; ++i) {
 				const uint8_t lum = p[0];
 				dst[i] = uint32_t(lum) | (uint32_t(lum) << 8) | (uint32_t(lum) << 16) | (255u << 24);
 				p += 1;
+			}
+		} else if (bpp == 16) {
+			const float* p = reinterpret_cast<const float*>(src);
+			uint32_t* dst = texture.pixels.data();
+			const auto clampByte = [](float v) {
+				return uint32_t(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+			};
+			for (size_t i = 0; i < pxCount; ++i) {
+				dst[i] = clampByte(p[0]) | (clampByte(p[1]) << 8) | (clampByte(p[2]) << 16) | (clampByte(p[3]) << 24);
+				p += 4;
 			}
 		} else {
 			std::fill(texture.pixels.begin(), texture.pixels.end(), 0);

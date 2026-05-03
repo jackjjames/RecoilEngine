@@ -1000,11 +1000,11 @@ static int MetalLuaGL_Blending(lua_State* L)
 		return 0;
 	}
 
-	if (args == 2 && lua_isnumber(L, 1) && lua_isnumber(L, 2)) {
+	// Match LuaOpenGL::Blending: gl.Blending(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA)
+	if (args == 2) {
 		MetalLuaUI::SetBlendFunc(
-			static_cast<uint32_t>(lua_tointeger(L, 1)),
-			static_cast<uint32_t>(lua_tointeger(L, 2))
-		);
+			static_cast<uint32_t>(luaL_checkint(L, 1)),
+			static_cast<uint32_t>(luaL_checkint(L, 2)));
 		return 0;
 	}
 

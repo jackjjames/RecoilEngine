@@ -373,10 +373,44 @@ public:
 		texture.desc.width = std::max(1, bitmap.xsize);
 		texture.desc.height = std::max(1, bitmap.ysize);
 		texture.texture = std::move(textureHandle);
-		if (const uint8_t* bitmapPixels = bitmap.GetRawMem(); bitmapPixels != nullptr) {
-			texture.pixels.resize(texture.desc.width * texture.desc.height);
-			std::copy_n(reinterpret_cast<const uint32_t*>(bitmapPixels), texture.pixels.size(), texture.pixels.begin());
+
+		const size_t pxCount = size_t(texture.desc.width) * size_t(texture.desc.height);
+		texture.pixels.resize(pxCount);
+
+		const uint8_t* src = bitmap.GetRawMem();
+		const int ch = bitmap.channels;
+		const uint32_t dtSize = bitmap.GetDataTypeSize();
+
+		if (src != nullptr && dtSize == 1 && ch == 4) {
+			std::memcpy(texture.pixels.data(), src, pxCount * 4);
+		} else if (src != nullptr && dtSize == 1 && ch == 3) {
+			const uint8_t* p = src;
+			uint32_t* dst = texture.pixels.data();
+			for (size_t i = 0; i < pxCount; ++i) {
+				dst[i] = uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (255u << 24);
+				p += 3;
+			}
+		} else if (src != nullptr && dtSize == 1 && ch == 2) {
+			const uint8_t* p = src;
+			uint32_t* dst = texture.pixels.data();
+			for (size_t i = 0; i < pxCount; ++i) {
+				const uint8_t lum = p[0];
+				const uint8_t a = p[1];
+				dst[i] = uint32_t(lum) | (uint32_t(lum) << 8) | (uint32_t(lum) << 16) | (uint32_t(a) << 24);
+				p += 2;
+			}
+		} else if (src != nullptr && dtSize == 1 && ch == 1) {
+			const uint8_t* p = src;
+			uint32_t* dst = texture.pixels.data();
+			for (size_t i = 0; i < pxCount; ++i) {
+				const uint8_t lum = p[0];
+				dst[i] = uint32_t(lum) | (uint32_t(lum) << 8) | (uint32_t(lum) << 16) | (255u << 24);
+				p += 1;
+			}
+		} else {
+			std::fill(texture.pixels.begin(), texture.pixels.end(), 0);
 		}
+
 		namedTextureIDs[cacheKey] = textureID;
 		boundTexture = textureID;
 		RecordTextureBind(textureID);
@@ -604,8 +638,8 @@ public:
 					const auto previousColor = color;
 					const int previousTexture = boundTexture;
 					std::copy(command.color, command.color + 4, color.begin());
-					if (command.textureID != 0)
-						boundTexture = command.textureID;
+					const int texForDraw = command.textureID != 0 ? command.textureID : boundTexture;
+					boundTexture = texForDraw;
 					DrawBoundTextureRectUV(command.x1, command.y1, command.x2, command.y2, command.u1, command.v1, command.u2, command.v2);
 					boundTexture = previousTexture;
 					color = previousColor;
@@ -838,6 +872,7 @@ public:
 		if (capturingList != 0) {
 			ListCommand command;
 			command.type = ListCommand::Type::Texture;
+			command.textureID = boundTexture;
 			command.x1 = x1;
 			command.y1 = y1;
 			command.x2 = x2;

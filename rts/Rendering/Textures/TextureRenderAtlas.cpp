@@ -429,7 +429,12 @@ bool CTextureRenderAtlas::CreateAtlasTexture()
 					glReadBuffer(GL_COLOR_ATTACHMENT0);
 
 					auto shEnToken = shader->EnableScoped();
-					shader->SetUniform("lod", static_cast<float>(level));
+					// Always sample from LOD 0 of the source texture and let the
+					// viewport shrinking handle downsampling. This prevents inter-texel
+					// bleed when a single source image contains multiple sub-textures
+					// (e.g. icon sprite sheets where glGenerateMipmap averages across
+					// icon boundaries).
+					shader->SetUniform("lod", 0.0f);
 
 					// Pixel-snapped mip-level rendering:
 					// At mip levels > 0, reusing level-0 normalized coords can place quad vertices
@@ -441,7 +446,11 @@ bool CTextureRenderAtlas::CreateAtlasTexture()
 					const float invMipW = 1.0f / static_cast<float>(mipW);
 					const float invMipH = 1.0f / static_cast<float>(mipH);
 					const uint32_t scale = 1u << level;
-					const int halfPad = atlasAllocator->GetPadding() / 2; // level-0 pixels
+					// At the highest LOD level, don't expand the destination rect into
+					// the padding zone. The padding is too thin (sub-mip-pixel) and
+					// floor/ceil rounding causes destination rects of neighboring icons
+					// to overlap, writing one icon's edge color over another's.
+					const int halfPad = (level < numLevels - 1) ? (atlasAllocator->GetPadding() / 2) : 0;
 
 					// draw
 					for (auto& [uniqTexName, entry] : atlasAllocator->GetEntries()) {

@@ -50,6 +50,15 @@ This is the bleeding-edge changelog since version 2025.06, for **pre-release 202
 - unsynced LuaRules (incl. unsynced LuaGaia) now has access to `io` and `os` libraries.
 - unsynced LuaRules (incl. unsynced LuaGaia) now has access to the `debug` library by default (no longer requires devmode).
 
+### Replay path getters
+- add `Spring.GetReplayFilePath() → string?`, returns path of replay being watched.
+- add `Spring.GetReplayRecordingFilePath() → string?`, returns path of replay to be produced. Note that this is just a prospective file path (nothing is written until the match ends), and that it possible to record a replay of a replay.
+
+### Build commands
+- builders now perform an extra block check immediately when a build command reaches the front of the queue. This is in addition to the existing periodic (≈ 0.4 Hz) block check. A block check cancels a build command if the build site is hard-blocked ("red squares", as opposed to "yellow squares" with reclaimables/mobiles).
+- add `Spring.SetEngineBuildSquareRendering(bool) → nil`, for disabling the native rendering of the footprint grid when a build command is selected.
+- add `wupget:DrawBuildSquare(unitDefID, x, z, facing, statuses) → nil` unsynced callin, fires when a build command is selected. Statuses is a 1D array for the status of each tile: 0 blocked (red), 1 occupied (yellow), 2 reclaimable (yellow), 3 open (green). This fires even if native drawing is enabled.
+
 ### Misc
 
 - UTF-8 file paths are now supported.
@@ -58,6 +67,7 @@ This is the bleeding-edge changelog since version 2025.06, for **pre-release 202
 - `script:AimWeapon` now receives unit-relative heading and pitch, rather than world-space. This means units angled on slopes will receive different values.
 - heading cast to radians will now return \[-pi; +pi) rather than \[0; tau).
 - `VFS.GetAvailableAIs()` returned entries now have a new `isLuaAI` boolean.
+- add `Platform.architecture`, string. Usually "x86_64", with some ongoing work to support "arm64".
 - add `Spring.SetCheatingEnabled(bool)`.
 - add `Spring.SetGodMode(bool? controlAllies, bool? controlEnemies)`.
 - add `Spring.GetClosestEnemyUnit(x, y, z, range = inf) → unitID?` to LuaUI.

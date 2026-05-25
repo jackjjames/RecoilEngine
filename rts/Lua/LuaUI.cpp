@@ -170,6 +170,7 @@ CLuaUI::CLuaUI()
 	// update extra call-ins
 	UpdateCallIn(L, "WorldTooltip");
 	UpdateCallIn(L, "MapDrawCmd");
+	UpdateCallIn(L, "DrawBuildSquare");
 
 	lua_settop(L, 0);
 }

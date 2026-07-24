@@ -17,6 +17,7 @@
 #include "Rendering/Textures/TextureCreationParams.hpp"
 #include "Sim/Units/UnitDef.h"
 #include "Sim/Units/UnitDefHandler.h"
+#include "System/Log/ILog.h"
 
 #include <algorithm>
 #include <array>
@@ -92,8 +93,10 @@ struct ListCommand {
 		Rect,
 		Triangle,
 		Texture,
+		TextureTriangle,
 		BindTexture,
 		Color,
+		BlendState,
 		PushMatrix,
 		PopMatrix,
 		LoadIdentity,
@@ -117,11 +120,18 @@ struct ListCommand {
 	float v1 = 0.0f;
 	float u2 = 1.0f;
 	float v2 = 1.0f;
+	float u3 = 1.0f;
+	float v3 = 1.0f;
 	float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 	// Triangle commands keep per-vertex color so feather outlines and
 	// gradient fills (RectRoundOutline / RectRound) interpolate correctly.
 	float color2[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 	float color3[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+	bool boolValue = false;
+	uint32_t srcColor = 0;
+	uint32_t dstColor = 0;
+	uint32_t srcAlpha = 0;
+	uint32_t dstAlpha = 0;
 };
 
 struct RectVertex {
@@ -174,7 +184,7 @@ layout(location = 1) in vec4 vColor;
 layout(location = 0) out vec4 fragColor;
 layout(set = 0, binding = 0) uniform sampler2D uTex;
 void main() {
-    fragColor = texture(uTex, vUV) * vColor;
+    fragColor = vec4(vColor.rgb, 1.0);
 }
 )";
 
@@ -282,8 +292,18 @@ public:
 			.dstAlpha = GL_ONE_MINUS_SRC_ALPHA,
 		};
 		texturePremultipliedPipeline = backend.CreatePipeline(textureDesc);
+		textureDesc.name = "lua_ui_texture_additive";
+		textureDesc.blendState = RenderTargetBlendState{
+			.enabled = true,
+			.srcColor = GL_SRC_ALPHA,
+			.dstColor = GL_ONE,
+			.srcAlpha = GL_ONE,
+			.dstAlpha = GL_ONE,
+		};
+		textureAdditivePipeline = backend.CreatePipeline(textureDesc);
 		valid = texturePipeline && texturePipeline->IsValid() &&
-		        texturePremultipliedPipeline && texturePremultipliedPipeline->IsValid();
+		        texturePremultipliedPipeline && texturePremultipliedPipeline->IsValid() &&
+		        textureAdditivePipeline && textureAdditivePipeline->IsValid();
 	}
 
 	void Kill()
@@ -304,6 +324,7 @@ public:
 		blendDstAlpha = GL_ONE_MINUS_SRC_ALPHA;
 		texturePipeline.reset();
 		texturePremultipliedPipeline.reset();
+		textureAdditivePipeline.reset();
 		rectPipeline.reset();
 		textureVertexBuffer.reset();
 		rectVertexBuffer.reset();
@@ -362,8 +383,7 @@ public:
 		tcp.linearMipMapFilter = false;
 		tcp.reqNumLevels = 1;
 
-		auto textureHandle = bitmap.CreateTextureHandle(tcp);
-		if (textureHandle == nullptr || !textureHandle->IsValid()) {
+		if (globalRendering == nullptr || globalRendering->renderBackend == nullptr) {
 			UnbindTexture();
 			return false;
 		}
@@ -372,7 +392,6 @@ public:
 		auto& texture = textures[textureID];
 		texture.desc.width = std::max(1, bitmap.xsize);
 		texture.desc.height = std::max(1, bitmap.ysize);
-		texture.texture = std::move(textureHandle);
 
 		const size_t pxCount = size_t(texture.desc.width) * size_t(texture.desc.height);
 		texture.pixels.resize(pxCount);
@@ -423,6 +442,19 @@ public:
 		} else {
 			std::fill(texture.pixels.begin(), texture.pixels.end(), 0);
 		}
+
+		// Always use an RGBA8 Metal texture for LuaUI bitmaps. CBitmap::CreateTextureHandle
+		// keeps GL_RGB8 for 3-channel images; MetalTexture::UploadImage skips RGB8 uploads,
+		// so DrawTextureScreenQuad never pushed icon pixels to the GPU (RGB PNG icons vanished).
+		texture.texture = globalRendering->renderBackend->CreateTexture2D(
+			int2(texture.desc.width, texture.desc.height), kGL_RGBA8, tcp, false);
+		if (texture.texture == nullptr || !texture.texture->IsValid()) {
+			textures.erase(textureID);
+			UnbindTexture();
+			return false;
+		}
+		texture.texture->UploadImage(texture.pixels.data());
+		texture.dirty = false;
 
 		namedTextureIDs[cacheKey] = textureID;
 		boundTexture = textureID;
@@ -531,6 +563,18 @@ public:
 		scissorEnabled = false;
 
 		drawFunc();
+		if (std::getenv("SPRING_METAL_LUAUI_DUMP_R2T") != nullptr && it->second.desc.width > 1000 && it->second.desc.height < 100) {
+			static int dumpCount = 0;
+			if (dumpCount++ < 6) {
+				const std::string path = std::string(std::getenv("SPRING_METAL_LUAUI_DUMP_R2T")) +
+					"/r2t_" + std::to_string(dumpCount) + "_id" + std::to_string(textureID) +
+					"_" + std::to_string(it->second.desc.width) + "x" +
+					std::to_string(it->second.desc.height) + ".png";
+				CBitmap bitmap(reinterpret_cast<const uint8_t*>(it->second.pixels.data()),
+				               it->second.desc.width, it->second.desc.height, 4);
+				bitmap.Save(path, false, true);
+			}
+		}
 
 		matrixStack = previousStack;
 		color = previousColor;
@@ -609,12 +653,22 @@ public:
 		const auto previousStack = matrixStack;
 		const auto previousColor = color;
 		const int previousTexture = boundTexture;
+		const bool previousBlendEnabled = blendEnabled;
+		const uint32_t previousBlendSrcColor = blendSrcColor;
+		const uint32_t previousBlendDstColor = blendDstColor;
+		const uint32_t previousBlendSrcAlpha = blendSrcAlpha;
+		const uint32_t previousBlendDstAlpha = blendDstAlpha;
 		capturingList = listID;
 		drawFunc();
 		capturingList = previousList;
 		matrixStack = previousStack;
 		color = previousColor;
 		boundTexture = previousTexture;
+		blendEnabled = previousBlendEnabled;
+		blendSrcColor = previousBlendSrcColor;
+		blendDstColor = previousBlendDstColor;
+		blendSrcAlpha = previousBlendSrcAlpha;
+		blendDstAlpha = previousBlendDstAlpha;
 
 		return listID;
 	}
@@ -657,11 +711,28 @@ public:
 					boundTexture = previousTexture;
 					color = previousColor;
 				} break;
+				case ListCommand::Type::TextureTriangle: {
+					const int previousTexture = boundTexture;
+					const int texForDraw = command.textureID != 0 ? command.textureID : boundTexture;
+					boundTexture = texForDraw;
+					DrawBoundTexturedTriangle(
+						command.x1, command.y1, command.u1, command.v1, command.color,
+						command.x2, command.y2, command.u2, command.v2, command.color2,
+						command.x3, command.y3, command.u3, command.v3, command.color3);
+					boundTexture = previousTexture;
+				} break;
 				case ListCommand::Type::BindTexture: {
 					boundTexture = command.textureID;
 				} break;
 				case ListCommand::Type::Color: {
 					std::copy(command.color, command.color + 4, color.begin());
+				} break;
+				case ListCommand::Type::BlendState: {
+					blendEnabled = command.boolValue;
+					blendSrcColor = command.srcColor;
+					blendDstColor = command.dstColor;
+					blendSrcAlpha = command.srcAlpha;
+					blendDstAlpha = command.dstAlpha;
 				} break;
 				case ListCommand::Type::PushMatrix: {
 					PushMatrix();
@@ -766,6 +837,7 @@ public:
 	void SetBlending(bool enabled)
 	{
 		blendEnabled = enabled;
+		RecordBlendCommand();
 	}
 
 	void SetBlendFunc(uint32_t src, uint32_t dst)
@@ -780,6 +852,7 @@ public:
 		blendDstColor = dstColor;
 		blendSrcAlpha = srcAlpha;
 		blendDstAlpha = dstAlpha;
+		RecordBlendCommand();
 	}
 
 	void DrawText(LuaUITextDraw draw)
@@ -875,6 +948,46 @@ public:
 			matrix.Transform(x3, y3), color3);
 	}
 
+	void DrawBoundTexturedTriangle(
+		float x1, float y1, float u1, float v1, const float color1[4],
+		float x2, float y2, float u2, float v2, const float color2[4],
+		float x3, float y3, float u3, float v3, const float color3[4])
+	{
+		if (capturingList != 0) {
+			ListCommand command;
+			command.type = ListCommand::Type::TextureTriangle;
+			command.textureID = boundTexture;
+			command.x1 = x1; command.y1 = y1; command.u1 = u1; command.v1 = v1;
+			command.x2 = x2; command.y2 = y2; command.u2 = u2; command.v2 = v2;
+			command.x3 = x3; command.y3 = y3; command.u3 = u3; command.v3 = v3;
+			std::copy(color1, color1 + 4, command.color);
+			std::copy(color2, color2 + 4, command.color2);
+			std::copy(color3, color3 + 4, command.color3);
+			lists[capturingList].push_back(std::move(command));
+			return;
+		}
+
+		const auto it = textures.find(boundTexture);
+		if (it == textures.end())
+			return;
+
+		const auto& texture = it->second;
+		if (capturingTexture != 0) {
+			CaptureTexturedTriangle(texture,
+				x1, y1, u1, v1, color1,
+				x2, y2, u2, v2, color2,
+				x3, y3, u3, v3, color3);
+			return;
+		}
+
+		const auto matrix = CurrentMatrix();
+		DrawTexturedTriangleScreen(
+			texture,
+			matrix.Transform(x1, y1), u1, v1, color1,
+			matrix.Transform(x2, y2), u2, v2, color2,
+			matrix.Transform(x3, y3), u3, v3, color3);
+	}
+
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2)
 	{
 		DrawBoundTextureRectUV(x1, y1, x2, y2, 0.0f, 1.0f, 1.0f, 0.0f);
@@ -899,11 +1012,20 @@ public:
 			return;
 		}
 
+		if (std::getenv("SPRING_METAL_LUAUI_TRACE") != nullptr && std::abs(x2 - x1) > 1000.0f) {
+			LOG_L(L_INFO, "[MetalLuaUI] texrect lookup bound=%d rect=(%.1f,%.1f)-(%.1f,%.1f)", boundTexture, x1, y1, x2, y2);
+		}
 		const auto it = textures.find(boundTexture);
-		if (it == textures.end())
+		if (it == textures.end()) {
+			if (std::getenv("SPRING_METAL_LUAUI_TRACE") != nullptr && std::abs(x2 - x1) > 1000.0f)
+				LOG_L(L_INFO, "[MetalLuaUI] texrect missing bound texture %d", boundTexture);
 			return;
+		}
 
 		const auto& texture = it->second;
+		if (std::getenv("SPRING_METAL_LUAUI_TRACE") != nullptr && std::abs(x2 - x1) > 1000.0f) {
+			LOG_L(L_INFO, "[MetalLuaUI] texrect found tex=%d size=%dx%d valid=%d dirty=%d", boundTexture, texture.desc.width, texture.desc.height, texture.texture && texture.texture->IsValid() ? 1 : 0, texture.dirty ? 1 : 0);
+		}
 		if (capturingTexture != 0) {
 			CaptureTextureRect(texture, x1, y1, x2, y2, u1, v1, u2, v2);
 			return;
@@ -947,6 +1069,21 @@ private:
 		ListCommand command;
 		command.type = ListCommand::Type::BindTexture;
 		command.textureID = textureID;
+		lists[capturingList].push_back(command);
+	}
+
+	void RecordBlendCommand()
+	{
+		if (capturingList == 0)
+			return;
+
+		ListCommand command;
+		command.type = ListCommand::Type::BlendState;
+		command.boolValue = blendEnabled;
+		command.srcColor = blendSrcColor;
+		command.dstColor = blendDstColor;
+		command.srcAlpha = blendSrcAlpha;
+		command.dstAlpha = blendDstAlpha;
 		lists[capturingList].push_back(command);
 	}
 
@@ -1054,6 +1191,34 @@ private:
 		RasterizeTextureRect(it->second, source, localX1, localY1, localX2, localY2, u1, v1, u2, v2);
 	}
 
+	void CaptureTexturedTriangle(
+		const TextureCommandBuffer& source,
+		float x1, float y1, float u1, float v1, const float color1[4],
+		float x2, float y2, float u2, float v2, const float color2[4],
+		float x3, float y3, float u3, float v3, const float color3[4])
+	{
+		if (source.pixels.empty())
+			return;
+
+		auto it = textures.find(capturingTexture);
+		if (it == textures.end())
+			return;
+
+		const auto matrix = CurrentMatrix();
+		const auto [clipX1, clipY1] = matrix.Transform(x1, y1);
+		const auto [clipX2, clipY2] = matrix.Transform(x2, y2);
+		const auto [clipX3, clipY3] = matrix.Transform(x3, y3);
+		const auto [localX1, localY1] = ClipToTextureLocal(clipX1, clipY1, it->second.desc);
+		const auto [localX2, localY2] = ClipToTextureLocal(clipX2, clipY2, it->second.desc);
+		const auto [localX3, localY3] = ClipToTextureLocal(clipX3, clipY3, it->second.desc);
+
+		RasterizeTexturedTriangle(
+			it->second, source,
+			localX1, localY1, u1, v1, color1,
+			localX2, localY2, u2, v2, color2,
+			localX3, localY3, u3, v3, color3);
+	}
+
 	void CaptureTriangle(
 		float x1, float y1, const float color1[4],
 		float x2, float y2, const float color2[4],
@@ -1114,20 +1279,63 @@ private:
 		return r | (g << 8) | (b << 16) | (a << 24);
 	}
 
-	static uint32_t BlendOver(uint32_t dst, uint32_t src)
+	static uint32_t TintPixel(uint32_t pixel, const float tint[4], bool blendEnabled)
 	{
-		const uint32_t srcA = (src >> 24) & 0xFFu;
-		if (srcA == 0)
-			return dst;
-		if (srcA == 0xFFu)
+		const auto scaleByte = [](uint32_t value, float scale) {
+			return uint32_t(std::clamp(float(value) * scale, 0.0f, 255.0f) + 0.5f);
+		};
+
+		const uint32_t r = scaleByte( pixel        & 0xFFu, tint[0]);
+		const uint32_t g = scaleByte((pixel >>  8) & 0xFFu, tint[1]);
+		const uint32_t b = scaleByte((pixel >> 16) & 0xFFu, tint[2]);
+		const uint32_t a = blendEnabled ? scaleByte((pixel >> 24) & 0xFFu, tint[3]) : 0xFFu;
+		return r | (g << 8) | (b << 16) | (a << 24);
+	}
+
+	static uint32_t BlendPixel(uint32_t dst, uint32_t src,
+	                           bool enabled,
+	                           uint32_t srcColorFactor, uint32_t dstColorFactor,
+	                           uint32_t srcAlphaFactor, uint32_t dstAlphaFactor)
+	{
+		if (!enabled)
 			return src;
 
-		const uint32_t invA = 255u - srcA;
-		const uint32_t r = (((src        & 0xFFu) * srcA) + ((dst        & 0xFFu) * invA)) / 255u;
-		const uint32_t g = ((((src >>  8) & 0xFFu) * srcA) + (((dst >>  8) & 0xFFu) * invA)) / 255u;
-		const uint32_t b = ((((src >> 16) & 0xFFu) * srcA) + (((dst >> 16) & 0xFFu) * invA)) / 255u;
-		const uint32_t a = std::min(255u, srcA + (((dst >> 24) & 0xFFu) * invA) / 255u);
+		const uint32_t srcA = (src >> 24) & 0xFFu;
+		const uint32_t dstA = (dst >> 24) & 0xFFu;
+		const auto factor = [&](uint32_t blendFactor) {
+			switch (blendFactor) {
+				case GL_ZERO: return 0u;
+				case GL_ONE: return 255u;
+				case GL_SRC_ALPHA: return srcA;
+				case GL_ONE_MINUS_SRC_ALPHA: return 255u - srcA;
+				case GL_DST_ALPHA: return dstA;
+				case GL_ONE_MINUS_DST_ALPHA: return 255u - dstA;
+				default: return 255u;
+			}
+		};
+
+		const uint32_t srcColorMul = factor(srcColorFactor);
+		const uint32_t dstColorMul = factor(dstColorFactor);
+		const uint32_t srcAlphaMul = factor(srcAlphaFactor);
+		const uint32_t dstAlphaMul = factor(dstAlphaFactor);
+		const auto blendByte = [](uint32_t srcByte, uint32_t dstByte, uint32_t srcMul, uint32_t dstMul) {
+			return std::min(255u, (srcByte * srcMul + dstByte * dstMul) / 255u);
+		};
+
+		const uint32_t r = blendByte( src        & 0xFFu,  dst        & 0xFFu, srcColorMul, dstColorMul);
+		const uint32_t g = blendByte((src >>  8) & 0xFFu, (dst >>  8) & 0xFFu, srcColorMul, dstColorMul);
+		const uint32_t b = blendByte((src >> 16) & 0xFFu, (dst >> 16) & 0xFFu, srcColorMul, dstColorMul);
+		const uint32_t a = blendByte(srcA, dstA, srcAlphaMul, dstAlphaMul);
 		return r | (g << 8) | (b << 16) | (a << 24);
+	}
+
+	static int RepeatTexel(float coord, int size)
+	{
+		if (size <= 1)
+			return 0;
+
+		const float wrapped = coord - std::floor(coord);
+		return std::clamp(int(wrapped * float(size - 1) + 0.5f), 0, size - 1);
 	}
 
 	void RasterizeRect(TextureCommandBuffer& texture, const LuaUIRectDraw& rect,
@@ -1151,7 +1359,7 @@ private:
 				std::fill(row + x0, row + x1, packed);
 			} else {
 				for (int x = x0; x < x1; ++x)
-					row[x] = BlendOver(row[x], packed);
+					row[x] = BlendPixel(row[x], packed, blendEnabled, blendSrcColor, blendDstColor, blendSrcAlpha, blendDstAlpha);
 			}
 		}
 		texture.dirty = true;
@@ -1173,7 +1381,18 @@ private:
 		int xEnd = std::clamp(int(std::ceil(maxX)), 0, texture.desc.width);
 		int y0 = std::clamp(int(std::floor(minY)), 0, texture.desc.height);
 		int yEnd = std::clamp(int(std::ceil(maxY)), 0, texture.desc.height);
+		const int preClipX0 = x0, preClipY0 = y0, preClipXEnd = xEnd, preClipYEnd = yEnd;
 		ApplyCaptureClip(x0, y0, xEnd, yEnd);
+		if (std::getenv("SPRING_METAL_LUAUI_RASTRACE") != nullptr && texture.desc.width > 1000 && texture.desc.height < 100) {
+			LOG_L(L_INFO, "[MetalLuaUI rasterTri] tex=%dx%d tri=(%.1f,%.1f)(%.1f,%.1f)(%.1f,%.1f) col1=(%.2f,%.2f,%.2f,%.2f) preClip=(%d,%d-%d,%d) postClip=(%d,%d-%d,%d) blend=%d srcC=%u dstC=%u srcA=%u dstA=%u",
+				texture.desc.width, texture.desc.height,
+				x1, y1, x2, y2, x3, y3,
+				color1[0], color1[1], color1[2], color1[3],
+				preClipX0, preClipY0, preClipXEnd, preClipYEnd,
+				x0, y0, xEnd, yEnd,
+				blendEnabled ? 1 : 0,
+				blendSrcColor, blendDstColor, blendSrcAlpha, blendDstAlpha);
+		}
 		if (x0 >= xEnd || y0 >= yEnd)
 			return;
 
@@ -1194,6 +1413,8 @@ private:
 			color1[3] == color2[3] && color1[3] == color3[3];
 		const uint32_t uniformPacked = uniformColor ? PackColor(color1) : 0u;
 
+		int writeCount = 0;
+		uint32_t lastWrittenAfter = 0;
 		for (int y = y0; y < yEnd; ++y) {
 			uint32_t* row = texture.pixels.data() + y * texture.desc.width;
 			for (int x = x0; x < xEnd; ++x) {
@@ -1225,10 +1446,79 @@ private:
 					};
 					src = PackColor(interp);
 				}
-				row[x] = blendEnabled ? BlendOver(row[x], src) : src;
+				row[x] = BlendPixel(row[x], src, blendEnabled, blendSrcColor, blendDstColor, blendSrcAlpha, blendDstAlpha);
+				lastWrittenAfter = row[x];
+				++writeCount;
 			}
 		}
+		if (std::getenv("SPRING_METAL_LUAUI_RASTRACE") != nullptr && texture.desc.width > 1000 && texture.desc.height < 100) {
+			LOG_L(L_INFO, "[MetalLuaUI rasterTri] capture=%d wrote=%d lastAfter=#%08x area=%.1f",
+				capturingTexture, writeCount, lastWrittenAfter, area);
+		}
 		texture.dirty = true;
+	}
+
+	void RasterizeTexturedTriangle(TextureCommandBuffer& target, const TextureCommandBuffer& source,
+	                               float x1, float y1, float u1, float v1, const float color1[4],
+	                               float x2, float y2, float u2, float v2, const float color2[4],
+	                               float x3, float y3, float u3, float v3, const float color3[4])
+	{
+		if (target.pixels.empty() || source.pixels.empty())
+			return;
+
+		const float minX = std::min({x1, x2, x3});
+		const float maxX = std::max({x1, x2, x3});
+		const float minY = std::min({y1, y2, y3});
+		const float maxY = std::max({y1, y2, y3});
+		int x0 = std::clamp(int(std::floor(minX)), 0, target.desc.width);
+		int xEnd = std::clamp(int(std::ceil(maxX)), 0, target.desc.width);
+		int y0 = std::clamp(int(std::floor(minY)), 0, target.desc.height);
+		int yEnd = std::clamp(int(std::ceil(maxY)), 0, target.desc.height);
+		ApplyCaptureClip(x0, y0, xEnd, yEnd);
+		if (x0 >= xEnd || y0 >= yEnd)
+			return;
+
+		const auto edge = [](float ax, float ay, float bx, float by, float px, float py) {
+			return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
+		};
+		const float area = edge(x1, y1, x2, y2, x3, y3);
+		if (area == 0.0f)
+			return;
+		const float invArea = 1.0f / area;
+
+		for (int y = y0; y < yEnd; ++y) {
+			uint32_t* dstRow = target.pixels.data() + y * target.desc.width;
+			for (int x = x0; x < xEnd; ++x) {
+				const float px = float(x) + 0.5f;
+				const float py = float(y) + 0.5f;
+				const float e23 = edge(x2, y2, x3, y3, px, py);
+				const float e31 = edge(x3, y3, x1, y1, px, py);
+				const float e12 = edge(x1, y1, x2, y2, px, py);
+				const bool inside =
+					(area > 0.0f && e23 >= 0.0f && e31 >= 0.0f && e12 >= 0.0f) ||
+					(area < 0.0f && e23 <= 0.0f && e31 <= 0.0f && e12 <= 0.0f);
+				if (!inside)
+					continue;
+
+				const float w1 = e23 * invArea;
+				const float w2 = e31 * invArea;
+				const float w3 = e12 * invArea;
+				const float u = u1 * w1 + u2 * w2 + u3 * w3;
+				const float v = v1 * w1 + v2 * w2 + v3 * w3;
+				const int srcX = RepeatTexel(u, source.desc.width);
+				const int srcY = RepeatTexel(v, source.desc.height);
+				const uint32_t* srcRow = source.pixels.data() + srcY * source.desc.width;
+				const float interpColor[4] = {
+					color1[0] * w1 + color2[0] * w2 + color3[0] * w3,
+					color1[1] * w1 + color2[1] * w2 + color3[1] * w3,
+					color1[2] * w1 + color2[2] * w2 + color3[2] * w3,
+					color1[3] * w1 + color2[3] * w2 + color3[3] * w3,
+				};
+				const uint32_t src = TintPixel(srcRow[srcX], interpColor, blendEnabled);
+				dstRow[x] = BlendPixel(dstRow[x], src, blendEnabled, blendSrcColor, blendDstColor, blendSrcAlpha, blendDstAlpha);
+			}
+		}
+		target.dirty = true;
 	}
 
 	void RasterizeTextureRect(TextureCommandBuffer& target, const TextureCommandBuffer& source,
@@ -1255,13 +1545,13 @@ private:
 		for (int y = y0; y < y1; ++y) {
 			uint32_t* dstRow = target.pixels.data() + y * target.desc.width;
 			const float v = v1 + (v2 - v1) * std::clamp(((float(y) + 0.5f) - localY1) * invHeight, 0.0f, 1.0f);
-			const int srcY = std::clamp(int(v * float(source.desc.height - 1) + 0.5f), 0, source.desc.height - 1);
+			const int srcY = RepeatTexel(v, source.desc.height);
 			const uint32_t* srcRow = source.pixels.data() + srcY * source.desc.width;
 			for (int x = x0; x < x1; ++x) {
 				const float u = u1 + (u2 - u1) * std::clamp(((float(x) + 0.5f) - localX1) * invWidth, 0.0f, 1.0f);
-				const int srcX = std::clamp(int(u * float(source.desc.width - 1) + 0.5f), 0, source.desc.width - 1);
+				const int srcX = RepeatTexel(u, source.desc.width);
 				const uint32_t src = TintPixel(srcRow[srcX], color, blendEnabled);
-				dstRow[x] = BlendOver(dstRow[x], src);
+				dstRow[x] = BlendPixel(dstRow[x], src, blendEnabled, blendSrcColor, blendDstColor, blendSrcAlpha, blendDstAlpha);
 			}
 		}
 		target.dirty = true;
@@ -1416,6 +1706,52 @@ private:
 		rectPipeline->Disable();
 	}
 
+	void DrawTexturedTriangleScreen(const TextureCommandBuffer& texture,
+	                                const std::pair<float, float>& p1, float u1, float v1, const float color1[4],
+	                                const std::pair<float, float>& p2, float u2, float v2, const float color2[4],
+	                                const std::pair<float, float>& p3, float u3, float v3, const float color3[4])
+	{
+		if (!valid || globalRendering == nullptr || texture.texture == nullptr || !texture.texture->IsValid())
+			return;
+		if (!ApplyScissor())
+			return;
+
+		if (texture.dirty) {
+			texture.texture->UploadImage(texture.pixels.data());
+			texture.dirty = false;
+		}
+
+		const float viewSizeX = std::max(1.0f, float(globalRendering->viewSizeX));
+		const float viewSizeY = std::max(1.0f, float(globalRendering->viewSizeY));
+		const auto ndc = [&](float x, float y) {
+			return std::pair<float, float>{x / viewSizeX * 2.0f - 1.0f, y / viewSizeY * 2.0f - 1.0f};
+		};
+		const auto packedTint = [&](const float c[4]) {
+			const float alpha = blendEnabled ? c[3] : 1.0f;
+			return std::array<float, 4>{c[0], c[1], c[2], alpha};
+		};
+
+		const auto [x1, y1] = ndc(p1.first, p1.second);
+		const auto [x2, y2] = ndc(p2.first, p2.second);
+		const auto [x3, y3] = ndc(p3.first, p3.second);
+		const auto tint1 = packedTint(color1);
+		const auto tint2 = packedTint(color2);
+		const auto tint3 = packedTint(color3);
+		TextureVertex verts[3] = {
+			{{x1, y1}, {u1, v1}, {tint1[0], tint1[1], tint1[2], tint1[3]}},
+			{{x2, y2}, {u2, v2}, {tint2[0], tint2[1], tint2[2], tint2[3]}},
+			{{x3, y3}, {u3, v3}, {tint3[0], tint3[1], tint3[2], tint3[3]}},
+		};
+
+		textureVertexBuffer->UpdateData(verts, sizeof(verts), 0);
+		IShaderPipeline* pipeline = SelectTexturePipeline();
+		pipeline->Enable();
+		pipeline->BindTexture(0, *texture.texture);
+		pipeline->BindVertexBuffer(0, *textureVertexBuffer);
+		pipeline->Draw(PrimitiveTopology::Triangles, 0, 3);
+		pipeline->Disable();
+	}
+
 	void DrawTextureScreen(const TextureCommandBuffer& texture, float x1, float y1, float x2, float y2,
 	                       float u1, float v1, float u2, float v2)
 	{
@@ -1448,6 +1784,25 @@ private:
 
 		const float viewSizeX = std::max(1.0f, float(globalRendering->viewSizeX));
 		const float viewSizeY = std::max(1.0f, float(globalRendering->viewSizeY));
+		if (std::getenv("SPRING_METAL_LUAUI_TRACE") != nullptr && std::abs(p11.first - p00.first) > 1000.0f) {
+			int srcNonzeroAlpha = 0;
+			uint32_t srcMaxAlpha = 0;
+			for (uint32_t p : texture.pixels) {
+				const uint32_t a = (p >> 24) & 0xFFu;
+				if (a > 0) ++srcNonzeroAlpha;
+				if (a > srcMaxAlpha) srcMaxAlpha = a;
+			}
+			LOG_L(L_INFO, "[MetalLuaUI] draw texture quad view=%dx%d rect=(%.1f,%.1f)-(%.1f,%.1f) uv=(%.2f,%.2f)-(%.2f,%.2f) tex=%dx%d nzA=%d maxA=%u dirty=%d valid=%d blendEn=%d srcC=%u dstC=%u",
+				globalRendering->viewSizeX, globalRendering->viewSizeY,
+				p00.first, p00.second, p11.first, p11.second,
+				u1, v1, u2, v2,
+				texture.desc.width, texture.desc.height,
+				srcNonzeroAlpha, srcMaxAlpha,
+				texture.dirty ? 1 : 0,
+				(texture.texture && texture.texture->IsValid()) ? 1 : 0,
+				blendEnabled ? 1 : 0,
+				blendSrcColor, blendDstColor);
+		}
 		const auto ndc = [&](float x, float y) {
 			return std::pair<float, float>{x / viewSizeX * 2.0f - 1.0f, y / viewSizeY * 2.0f - 1.0f};
 		};
@@ -1458,13 +1813,18 @@ private:
 		const auto [nx11, ny11] = ndc(p11.first, p11.second);
 		const float alpha = blendEnabled ? color[3] : 1.0f;
 		const float tint[4] = {color[0], color[1], color[2], alpha};
+		(void)tint;
+		const float c1[4] = {0.0f, 0.0f, 1.0f, 1.0f};  // T1 blue
+		const float c2[4] = {1.0f, 0.0f, 0.0f, 1.0f};  // T2 red
+		// T1 expanded to a giant quad on the LEFT half so we can rule out
+		// it being clipped by some near-degenerate hit; T2 stays normal.
 		TextureVertex verts[6] = {
-			{{nx00, ny00}, {u1, v1}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx10, ny10}, {u2, v1}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx01, ny01}, {u1, v2}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx01, ny01}, {u1, v2}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx10, ny10}, {u2, v1}, {tint[0], tint[1], tint[2], tint[3]}},
-			{{nx11, ny11}, {u2, v2}, {tint[0], tint[1], tint[2], tint[3]}},
+			{{-1.0f, -1.0f}, {0.0f, 0.0f}, {c1[0], c1[1], c1[2], c1[3]}},
+			{{ 0.0f, -1.0f}, {1.0f, 0.0f}, {c1[0], c1[1], c1[2], c1[3]}},
+			{{-1.0f,  1.0f}, {0.0f, 1.0f}, {c1[0], c1[1], c1[2], c1[3]}},
+			{{nx01, ny01}, {u1, v2}, {c2[0], c2[1], c2[2], c2[3]}},
+			{{nx10, ny10}, {u2, v1}, {c2[0], c2[1], c2[2], c2[3]}},
+			{{nx11, ny11}, {u2, v2}, {c2[0], c2[1], c2[2], c2[3]}},
 		};
 
 		textureVertexBuffer->UpdateData(verts, sizeof(verts), 0);
@@ -1472,12 +1832,18 @@ private:
 		pipeline->Enable();
 		pipeline->BindTexture(0, *texture.texture);
 		pipeline->BindVertexBuffer(0, *textureVertexBuffer);
-		pipeline->Draw(PrimitiveTopology::Triangles, 0, 6);
+		// Two separate draw calls per triangle. Drawing 6 verts in one
+		// call was leaving the first triangle invisible on Apple Silicon
+		// even with cullMode=None; isolating the draws sidesteps that.
+		pipeline->Draw(PrimitiveTopology::Triangles, 0, 3);
+		pipeline->Draw(PrimitiveTopology::Triangles, 3, 3);
 		pipeline->Disable();
 	}
 
 	IShaderPipeline* SelectTexturePipeline() const
 	{
+		if (blendEnabled && blendSrcColor == GL_SRC_ALPHA && blendDstColor == GL_ONE)
+			return textureAdditivePipeline.get();
 		if (blendEnabled && blendSrcColor == GL_ONE && blendDstColor == GL_ONE_MINUS_SRC_ALPHA)
 			return texturePremultipliedPipeline.get();
 
@@ -1515,6 +1881,7 @@ private:
 	std::unique_ptr<IShaderPipeline> rectPipeline;
 	std::unique_ptr<IShaderPipeline> texturePipeline;
 	std::unique_ptr<IShaderPipeline> texturePremultipliedPipeline;
+	std::unique_ptr<IShaderPipeline> textureAdditivePipeline;
 	std::unique_ptr<IBuffer> rectVertexBuffer;
 	std::unique_ptr<IBuffer> textureVertexBuffer;
 	std::unordered_map<int, TextureCommandBuffer> textures;
@@ -1587,6 +1954,16 @@ namespace MetalLuaUI
 		float x3, float y3, const float color3[4])
 	{
 		GetRenderer().DrawTriangleColored(x1, y1, color1, x2, y2, color2, x3, y3, color3);
+	}
+	void DrawBoundTexturedTriangle(
+		float x1, float y1, float u1, float v1, const float color1[4],
+		float x2, float y2, float u2, float v2, const float color2[4],
+		float x3, float y3, float u3, float v3, const float color3[4])
+	{
+		GetRenderer().DrawBoundTexturedTriangle(
+			x1, y1, u1, v1, color1,
+			x2, y2, u2, v2, color2,
+			x3, y3, u3, v3, color3);
 	}
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2) { GetRenderer().DrawBoundTextureRect(x1, y1, x2, y2); }
 	void DrawBoundTextureRectUV(float x1, float y1, float x2, float y2, float u1, float v1, float u2, float v2) { GetRenderer().DrawBoundTextureRectUV(x1, y1, x2, y2, u1, v1, u2, v2); }

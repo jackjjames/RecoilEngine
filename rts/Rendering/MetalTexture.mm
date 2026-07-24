@@ -34,6 +34,10 @@ constexpr uint32_t kGL_RGBA8  = 0x8058;
 constexpr uint32_t kGL_SRGB8  = 0x8C41;
 constexpr uint32_t kGL_SRGB8_ALPHA8 = 0x8C43;
 constexpr uint32_t kGL_TEXTURE_2D = 0x0DE1;
+constexpr uint32_t kGL_REPEAT = 0x2901;
+constexpr uint32_t kGL_CLAMP_TO_EDGE = 0x812F;
+constexpr uint32_t kGL_CLAMP_TO_BORDER = 0x812D;
+constexpr uint32_t kGL_MIRRORED_REPEAT = 0x8370;
 
 struct MtlFormatInfo {
 	MTLPixelFormat fmt  = MTLPixelFormatInvalid;
@@ -71,19 +75,34 @@ MTLSamplerMipFilter ChooseMipFilter(const GL::TextureCreationParams& params)
 	return params.linearMipMapFilter ? MTLSamplerMipFilterLinear : MTLSamplerMipFilterNearest;
 }
 
+MTLSamplerAddressMode ChooseAddressMode(uint32_t wrapMode)
+{
+	switch (wrapMode) {
+		case kGL_REPEAT: return MTLSamplerAddressModeRepeat;
+		case kGL_MIRRORED_REPEAT: return MTLSamplerAddressModeMirrorRepeat;
+		case kGL_CLAMP_TO_EDGE:
+		case kGL_CLAMP_TO_BORDER:
+		default: return MTLSamplerAddressModeClampToEdge;
+	}
+}
+
 id<MTLSamplerState> BuildSampler(id<MTLDevice> device, const GL::TextureCreationParams& params, int32_t numLevels)
 {
 	MTLSamplerDescriptor* desc = [MTLSamplerDescriptor new];
 	desc.minFilter = ChooseMinFilter(params, numLevels);
 	desc.magFilter = ChooseMagFilter(params);
 	desc.mipFilter = (numLevels > 1) ? ChooseMipFilter(params) : MTLSamplerMipFilterNotMipmapped;
-	// TextureCreationParams still carries wrap mode as optional GL enums;
-	// for the loading-screen bitmap quad clamp-to-edge is the sensible
-	// default. Wider wrap-mode translation can land when the real
-	// TextureCreationParams-driven consumers (unit / map atlases) show up.
-	desc.sAddressMode = MTLSamplerAddressModeClampToEdge;
-	desc.tAddressMode = MTLSamplerAddressModeClampToEdge;
-	desc.rAddressMode = MTLSamplerAddressModeClampToEdge;
+	if (params.wrapModes.has_value()) {
+		const auto& wrapModes = params.wrapModes.value();
+		desc.sAddressMode = ChooseAddressMode(wrapModes[0]);
+		desc.tAddressMode = ChooseAddressMode(wrapModes[1]);
+		desc.rAddressMode = ChooseAddressMode(wrapModes[2]);
+	} else {
+		const MTLSamplerAddressMode addressMode = ChooseAddressMode(params.GetWrapMode());
+		desc.sAddressMode = addressMode;
+		desc.tAddressMode = addressMode;
+		desc.rAddressMode = addressMode;
+	}
 	desc.maxAnisotropy = params.aniso > 1.0f ? static_cast<NSUInteger>(params.aniso) : 1;
 	return [device newSamplerStateWithDescriptor:desc];
 }

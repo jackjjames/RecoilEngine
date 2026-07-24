@@ -55,6 +55,10 @@ namespace MetalLuaUI
 		float x1, float y1, const float color1[4],
 		float x2, float y2, const float color2[4],
 		float x3, float y3, const float color3[4]);
+	void DrawBoundTexturedTriangle(
+		float x1, float y1, float u1, float v1, const float color1[4],
+		float x2, float y2, float u2, float v2, const float color2[4],
+		float x3, float y3, float u3, float v3, const float color3[4]);
 	void DrawBoundTextureRect(float x1, float y1, float x2, float y2);
 	void DrawBoundTextureRectUV(float x1, float y1, float x2, float y2, float u1, float v1, float u2, float v2);
 }

@@ -10,6 +10,7 @@
 #include "System/Platform/WindowManagerHelper.h"
 #include "System/Platform/errorhandler.h"
 
+#include <cstdlib>
 #include <memory>
 
 #include <SDL.h>
@@ -261,9 +262,23 @@ void Begin(SDL_Window* window)
 	id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
 	id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPass];
 
+	// Explicit defaults so caller-side rendering is reproducible regardless of
+	// what state Metal might leave at encoder construction. Without these the
+	// LuaUI quad-as-two-triangles draw was rendering only one of the two tris
+	// in some configurations (probable winding/face-cull leak from elsewhere).
+	[encoder setCullMode:MTLCullModeNone];
+	[encoder setFrontFacingWinding:MTLWindingCounterClockwise];
+
 	[drawable retain];
 	[commandBuffer retain];
 	[encoder retain];
+
+	if (std::getenv("SPRING_METAL_LUAUI_TRACE") != nullptr) {
+		static int once = 0;
+		if (once++ < 1) {
+			NSLog(@"[Metal] drawable size = %lux%lu", (unsigned long)drawable.texture.width, (unsigned long)drawable.texture.height);
+		}
+	}
 
 	MetalGlobals::SetCurrentDrawable((__bridge void*)drawable);
 	MetalGlobals::SetCurrentCommandBuffer((__bridge void*)commandBuffer);

@@ -10,8 +10,10 @@ add_executable(metal-smoke EXCLUDE_FROM_ALL
 	${CMAKE_SOURCE_DIR}/rts/Rendering/MetalRenderGlobals.mm
 	${CMAKE_SOURCE_DIR}/rts/Rendering/MetalBuffer.mm
 	${CMAKE_SOURCE_DIR}/rts/Rendering/MetalShaderPipeline.mm
+	${CMAKE_SOURCE_DIR}/rts/Rendering/MetalTexture.mm
 	${CMAKE_SOURCE_DIR}/rts/Rendering/Platform/MetalOffscreenFrame.mm
 	${CMAKE_SOURCE_DIR}/rts/Rendering/ShaderTranslator.cpp
+	${CMAKE_SOURCE_DIR}/rts/Rendering/Textures/TextureCreationParams.cpp
 )
 
 target_compile_definitions(metal-smoke PRIVATE TOOLS)
@@ -23,6 +25,7 @@ target_include_directories(metal-smoke PRIVATE
 
 target_link_libraries(metal-smoke PRIVATE
 	SDL2::SDL2
+	glad
 	${SPRING_SHADER_TRANSLATOR_LIBS}
 	"-framework Metal"
 	"-framework QuartzCore"

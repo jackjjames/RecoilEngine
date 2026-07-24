@@ -22,6 +22,7 @@
 #include <variant>
 #include <span>
 #include <unordered_map>
+#include <cstring>
 
 #include <fmt/format.h>
 
@@ -338,8 +339,18 @@ static bool UsesCommonInterface(const char* name)
 	return ClassifyEntry(name) == EntryClass::CommonInterface;
 }
 
-static int UnsupportedGL(lua_State*)
+static int UnsupportedGL(lua_State* L)
 {
+	if (std::getenv("SPRING_METAL_LUAUI_TRACE") != nullptr) {
+		static int traceCount = 0;
+		if (traceCount++ < 80) {
+			lua_Debug ar;
+			if (lua_getstack(L, 1, &ar) != 0 && lua_getinfo(L, "Sl", &ar) != 0)
+				LOG_L(L_INFO, "[MetalLuaGL] unsupported call from %s:%d", ar.short_src, ar.currentline);
+			else
+				LOG_L(L_INFO, "[MetalLuaGL] unsupported call");
+		}
+	}
 	// This is an API boundary, not a visual fallback: unsupported GL
 	// render/state calls are intentionally inert on Metal until they
 	// have a real backend-neutral implementation. Resource creation
@@ -511,6 +522,13 @@ static int MetalLuaGL_DeleteTexture(lua_State* L)
 
 static int MetalLuaGL_Texture(lua_State* L)
 {
+	if (std::getenv("SPRING_METAL_LUAUI_TRACE") != nullptr) {
+		lua_Debug ar;
+		if (lua_getstack(L, 1, &ar) != 0 && lua_getinfo(L, "Sl", &ar) != 0) {
+			if (std::strstr(ar.short_src, "r2thelper") != nullptr)
+				LOG_L(L_INFO, "[MetalLuaGL] Texture argtype=%s from %s:%d", luaL_typename(L, 1), ar.short_src, ar.currentline);
+		}
+	}
 	if (lua_isboolean(L, 1) && !lua_toboolean(L, 1)) {
 		MetalLuaUI::UnbindTexture();
 		return 0;
@@ -529,6 +547,11 @@ static int MetalLuaGL_Texture(lua_State* L)
 
 static int MetalLuaGL_RenderToTexture(lua_State* L)
 {
+	if (std::getenv("SPRING_METAL_LUAUI_TRACE") != nullptr) {
+		lua_Debug ar;
+		if (lua_getstack(L, 1, &ar) != 0 && lua_getinfo(L, "Sl", &ar) != 0)
+			LOG_L(L_INFO, "[MetalLuaGL] RenderToTexture tex=%d from %s:%d", luaL_checkint(L, 1), ar.short_src, ar.currentline);
+	}
 	const int textureID = luaL_checkint(L, 1);
 	luaL_checktype(L, 2, LUA_TFUNCTION);
 	const int argCount = lua_gettop(L) - 2;
@@ -567,6 +590,11 @@ static int MetalLuaGL_TexRect(lua_State* L)
 	const float x2 = luaL_checkfloat(L, 3);
 	const float y2 = luaL_checkfloat(L, 4);
 	const int args = lua_gettop(L);
+	if (std::getenv("SPRING_METAL_LUAUI_TRACE") != nullptr) {
+		lua_Debug ar;
+		if (lua_getstack(L, 1, &ar) != 0 && lua_getinfo(L, "Sl", &ar) != 0)
+			LOG_L(L_INFO, "[MetalLuaGL] TexRect args=%d from %s:%d rect=(%.1f,%.1f)-(%.1f,%.1f)", args, ar.short_src, ar.currentline, x1, y1, x2, y2);
+	}
 	if (args >= 8) {
 		MetalLuaUI::DrawBoundTextureRectUV(
 			x1, y1, x2, y2,
@@ -709,33 +737,14 @@ static void MetalLuaGL_DrawCapturedRect(const std::vector<MetalLuaImmediateVerte
 		return;
 	}
 
-	// Textured quad: keep the AABB-fit path. The Metal rasterizer's textured
-	// path doesn't support per-vertex UVs yet; FlowUI's TexturedRectRound
-	// uses a single uniform color, so averaging is exact for that case.
-	float x1 = v1.x;
-	float y1 = v1.y;
-	float x2 = v1.x;
-	float y2 = v1.y;
-	float color[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-
-	for (size_t i = first; i < end; ++i) {
-		x1 = std::min(x1, vertices[i].x);
-		y1 = std::min(y1, vertices[i].y);
-		x2 = std::max(x2, vertices[i].x);
-		y2 = std::max(y2, vertices[i].y);
-		color[0] += vertices[i].color[0];
-		color[1] += vertices[i].color[1];
-		color[2] += vertices[i].color[2];
-		color[3] = std::max(color[3], vertices[i].color[3]);
-	}
-
-	const float invCount = 1.0f / float(end - first);
-	const float u1 = v1.u;
-	const float vt1 = v1.v;
-	const float u2 = v3.u;
-	const float vt2 = v3.v;
-	MetalLuaUI::SetColor(color[0] * invCount, color[1] * invCount, color[2] * invCount, color[3]);
-	MetalLuaUI::DrawBoundTextureRectUV(x1, y1, x2, y2, u1, vt1, u2, vt2);
+	MetalLuaUI::DrawBoundTexturedTriangle(
+		v1.x, v1.y, v1.u, v1.v, v1.color,
+		v2.x, v2.y, v2.u, v2.v, v2.color,
+		v3.x, v3.y, v3.u, v3.v, v3.color);
+	MetalLuaUI::DrawBoundTexturedTriangle(
+		v1.x, v1.y, v1.u, v1.v, v1.color,
+		v3.x, v3.y, v3.u, v3.v, v3.color,
+		v4.x, v4.y, v4.u, v4.v, v4.color);
 }
 
 static void MetalLuaGL_DrawCapturedTriangle(const std::vector<MetalLuaImmediateVertex>& vertices, size_t i1, size_t i2, size_t i3)
@@ -743,13 +752,21 @@ static void MetalLuaGL_DrawCapturedTriangle(const std::vector<MetalLuaImmediateV
 	if (i1 >= vertices.size() || i2 >= vertices.size() || i3 >= vertices.size())
 		return;
 
+	const MetalLuaImmediateVertex& v1 = vertices[i1];
+	const MetalLuaImmediateVertex& v2 = vertices[i2];
+	const MetalLuaImmediateVertex& v3 = vertices[i3];
+	if (MetalLuaUI::HasBoundTexture()) {
+		MetalLuaUI::DrawBoundTexturedTriangle(
+			v1.x, v1.y, v1.u, v1.v, v1.color,
+			v2.x, v2.y, v2.u, v2.v, v2.color,
+			v3.x, v3.y, v3.u, v3.v, v3.color);
+		return;
+	}
+
 	// Forward per-vertex colors so feather outlines (RectRoundOutline) and
 	// gradient fills (RectRound colorTop/colorBottom) interpolate correctly
 	// across the rasterized span. Averaging here loses the inner=transparent
 	// outer=opaque alpha gradient and paints the whole triangle solid.
-	const MetalLuaImmediateVertex& v1 = vertices[i1];
-	const MetalLuaImmediateVertex& v2 = vertices[i2];
-	const MetalLuaImmediateVertex& v3 = vertices[i3];
 	MetalLuaUI::DrawTriangleColored(
 		v1.x, v1.y, v1.color,
 		v2.x, v2.y, v2.color,
@@ -806,23 +823,28 @@ static int MetalLuaGL_BeginEnd(lua_State* L)
 	auto& vertices = MetalLuaImmediateVertices();
 	vertices.clear();
 
-	// Always run the user's function so Lua-side state (gl.Color, gl.Texture, etc.) is observed,
-	// but only collect vertices when there is a capture target and a supported primitive.
-	const bool capture = MetalLuaGL_ShouldCaptureImmediate()
-		&& (primMode == GL_QUADS || primMode == GL_TRIANGLES
-		    || primMode == GL_TRIANGLE_FAN || primMode == GL_TRIANGLE_STRIP);
+	// Always run the user's function so Lua-side state (gl.Color, gl.Texture, etc.) is observed.
+	// Collect vertices for supported primitives whenever BeginEnd runs: widgets draw most geometry
+	// straight to the screen (capturingTexture/capturingList == 0). The old gate on
+	// ShouldCaptureImmediate() dropped every quad/triangle outside R2T / display-list recording,
+	// which hid textured icons and gradient chrome (BAR FlowUI uses BeginEnd heavily).
+	const bool supportedPrim = (primMode == GL_QUADS || primMode == GL_TRIANGLES
+	    || primMode == GL_TRIANGLE_FAN || primMode == GL_TRIANGLE_STRIP);
 	const bool previousCapturing = MetalLuaImmediateCapturing();
-	MetalLuaImmediateCapturing() = capture;
+	MetalLuaImmediateCapturing() = supportedPrim;
 	lua_pushvalue(L, 2);
 	for (int arg = 3; arg <= args; ++arg)
 		lua_pushvalue(L, arg);
 	const int error = lua_pcall(L, args - 2, 0, 0);
-	MetalLuaImmediateCapturing() = previousCapturing;
-	if (error != 0)
+	if (error != 0) {
+		MetalLuaImmediateCapturing() = previousCapturing;
 		lua_error(L);
+	}
 
-	if (!capture)
+	if (!supportedPrim) {
+		MetalLuaImmediateCapturing() = previousCapturing;
 		return 0;
+	}
 
 	if (primMode == GL_QUADS) {
 		for (size_t i = 0; i + 3 < vertices.size(); i += 4)
@@ -843,6 +865,8 @@ static int MetalLuaGL_BeginEnd(lua_State* L)
 				MetalLuaGL_DrawCapturedTriangle(vertices, i + 1, i, i + 2);
 		}
 	}
+
+	MetalLuaImmediateCapturing() = previousCapturing;
 	return 0;
 }
 
@@ -906,9 +930,6 @@ static bool MetalLuaGL_ReadVertexTable(lua_State* L, int tableIdx, MetalLuaImmed
 
 static int MetalLuaGL_Shape(lua_State* L)
 {
-	if (!MetalLuaGL_ShouldCaptureImmediate())
-		return 0;
-
 	const int primMode = luaL_checkint(L, 1);
 	luaL_checktype(L, 2, LUA_TTABLE);
 

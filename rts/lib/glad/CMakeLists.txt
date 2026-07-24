@@ -7,4 +7,7 @@ else  (UNIX AND NOT MINGW AND NOT APPLE)
 	add_library(glad glad.c)
 endif (UNIX AND NOT MINGW AND NOT APPLE)
 
-target_include_directories(glad PUBLIC /)
+target_include_directories(glad PUBLIC
+	"${CMAKE_CURRENT_SOURCE_DIR}/.."
+	"${CMAKE_CURRENT_SOURCE_DIR}"
+)
